@@ -21,7 +21,7 @@ IP 位址是分配給網路上每個裝置的唯一識別碼。它用於將資�
 
 許多連接到互聯網的電腦都託管著部分 DNS 資料庫以及允許其他人存取該資料庫的軟體。這些電腦稱為 DNS 伺服器。沒有 DNS server包含整個資料庫；它們只包含它的一個子集。如果 DNS 伺服器不包含另一台電腦請求的域名，則 DNS 伺服器會將請求電腦重新導向至另一台 DNS 伺服器。
 
-![image](https://hackmd.io/_uploads/r1Sdc_3E6.png)
+![image](images/dns.png)
 
 DNS的結構類似 IP 路由層次結構。請求名稱解析的電腦將被重定向到層次結構“向上”，直到找到可以解析請求中的網域的 DNS 伺服器。樹的頂部是域根。一些較舊的、更常見的網域位於頂部附近。沒有顯示的是世界各地的眾多 DNS 伺服器，它們構成了層次結構的其餘部分。
 設定 Internet 連線時（例如，適用於 Windows 中的 LAN 或撥接網路），通常會在安裝過程中指定一台主 DNS 伺服器和一台或多台輔助 DNS 伺服器。這樣，任何需要網域解析的網路應用程式都能夠正常運作。
@@ -56,7 +56,7 @@ TCP/IP stack如下所示：
 
 如果我們要遵循訊息「Hello computer 5.6.7.8!」的路徑 從我們的電腦到IP位址為5.6.7.8的電腦，會發生這樣的事情：
 
-![image](https://hackmd.io/_uploads/S1DNv_nN6.png)
+![image](images/flow.png)
 
 
 1. 該訊息將從電腦上協定棧protocol stack的頂部開始，然後向下工作。
@@ -81,7 +81,7 @@ TCP 的工作原理如下：
 * IP 與 TCP 唯一的共同點是它接收資料並將其自己的 IP 標頭資訊新增至 TCP 資料的方式。
 
 下面是封包經過應用層、TCP 層和 IP 層後的樣子。應用層資料在TCP層分段，加入TCP報頭，資料包繼續到IP層，加入IP報頭，然後資料包透過網路傳輸。
-![image](https://hackmd.io/_uploads/HyFpvFnNp.png)
+![image](images/packet.png)
 
 ## 使用 SSL/TLS 保護網路通信
 使用 SSL/TLS 保護網路通訊時，需要了解一些關鍵概念：
