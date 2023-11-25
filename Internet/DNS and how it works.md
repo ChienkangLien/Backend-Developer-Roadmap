@@ -1,6 +1,6 @@
 # DNS and how it works?
 Domain Name System (DNS)，人們透過網域在線上存取訊息，例如 nytimes.com 或 espn.com。Web 瀏覽器透過Internet 協定 (IP)位址進行互動。DNS 將網域名稱轉換為IP 位址，以便瀏覽器載入 Internet 資源。
-![image](images/dns request.png)
+![image](images/dnsRequest.png)
 
 ## 載入網頁涉及 4 個 DNS 伺服器
 * DNS 遞歸器DNS recursor - 遞歸器可以被視為圖書館員，他被要求去圖書館的某個地方查找特定的書籍。DNS 遞歸器是一種伺服器，旨在透過 Web 瀏覽器等應用程式接收來自用戶端電腦的查詢。通常，遞歸器負責發出額外的請求，以滿足客戶端的 DNS 查詢。
@@ -15,7 +15,7 @@ Domain Name System (DNS)，人們透過網域在線上存取訊息，例如 nyti
 實際保存並負責DNS資源記錄的伺服器。這是 DNS 查找鏈底部的伺服器，它將回應查詢的資源記錄，最終允許發出請求的 Web 瀏覽器到達訪問網站或其他 Web 資源所需的 IP 位址。
 
 值得一提的是，在查詢子網域（例如 foo.example.com 或 blog.cloudflare.com ）的情況下，將在權威網域名稱伺服器之後的序列中新增一個額外的網域伺服器，該網域伺服器負責儲存子域名的CNAME 記錄。
-![image](images/dns chian.png)
+![image](images/dnsChian.png)
 ## DNS 查找的步驟
 1. 使用者在 Web 瀏覽器中輸入 example.com，查詢就會傳送到 Internet 並由 **DNS 遞歸解析器**接收。
 2. 然後解析器查詢 **DNS 根伺服器**。
@@ -30,7 +30,7 @@ Domain Name System (DNS)，人們透過網域在線上存取訊息，例如 nyti
 
 9. 瀏覽器向 IP 位址發出HTTP請求。
 10. 該 IP 上的伺服器會傳回要在瀏覽器中呈現的網頁。
-![image](images/dns lookup.png)
+![image](images/dnsLookup.png)
 ## DNS 查詢的類型
 1. 遞歸查詢 - 在遞歸查詢中，DNS 用戶端要求 DNS 伺服器（通常是 DNS 遞歸解析器）使用所要求的資源記錄或錯誤訊息（如果解析器找不到該記錄）來回應用戶端。
 2. 迭代查詢 - DNS 客戶端將允許 DNS 伺服器返回其所能返回的最佳答案。如果查詢的 DNS 伺服器沒有與查詢名稱相符的內容，它將傳回對權威DNS伺服器而言較低層級的網域命名空間的參考。然後 DNS 客戶端將查詢引用位址。此程序將繼續使用查詢鏈中的其他 DNS 伺服器，直到發生錯誤或逾時。
