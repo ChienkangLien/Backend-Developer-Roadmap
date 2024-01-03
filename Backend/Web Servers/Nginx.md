@@ -547,3 +547,295 @@ stream {
     }
 }
 ```
+
+## 緩存
+0.7.48版開始提供緩存功能，使用ngx_http_proxy_module 模塊來完成
+原理：
+1. URL + [可指定其他內容] = key
+2. key + MD5加密 = 字符串(密文)
+3. 緩存目錄，ex: /usr/local/proxy_cache
+4. 搭配字符串，在緩存目錄中分層存儲，ex: /usr/local/proxy_cache/a/b3
+5. 判斷緩存目錄有沒有訪問數據對應的目錄
+
+* `proxy_cache_path path [levels=number] keys_zone=zone_name:zone_size [inactive=time][max_sixe=size];` 設置緩存文件的存放路徑；配置在http 塊中
+path - 緩存路徑，ex: /usr/local/proxy_cache
+levels - 指定緩存空間對應的目錄，最多可以設置三層，每層取值為1|2，如：levels=1:2 兩層目錄，第一次是一個字母、第二次是兩個字母；舉例：example[key] 通過加密後值為1a79a4d60de6718e8e5b326e338ae533，levels=1:2 路徑為/usr/local/proxy_cache/3/53、levels=2:2:2 路徑為/usr/local/proxy_cache/33/e5/8a
+keys_zone - 設置緩存區名稱及大小，如：keys_zone=:test:200m 緩存區名稱test、大小為200M，1M 大概可存儲8000個keys
+inactive - 指定緩存的數據多久時間未被訪問就會被刪除，如：inactive=1d 一天內沒被訪問即刪除
+max_size - 最大緩存空間，若空間存滿、默認會覆蓋最舊的資源，如：max_size=20g
+
+example:
+```
+http{
+    proxy_cache_path /usr/local/proxy_cache levels=1:2:1 keys_zone=test:200m inactive=1d max_size=20g;
+}
+```
+
+* `proxy_cache zone_name on|off` 開啟代理緩存默認off
+* `proxy_cache_key key` 設置web 緩存的key 值(會將key 值經過MD5 加密後緩存)，默認proxy_cache_key \$scheme\$proxy_host$request_uri
+* `proxy_cache_valid [code...] time` 對不同返回狀態碼的URL 設置不同的緩存時間
+* `proxy_cache_min_uses number` 資源被訪問多少次後被緩存
+* `proxy_cache_methods GET|HEAD|POST` 緩存哪些HTTP 方法
+
+example:
+```
+http{
+    proxy_cache_path /usr/local/proxy_cache levels=1:2:1 keys_zone=test:200m inactive=1d max_size=20g;
+    upstream backend {
+        server 192.168.200.148:8080;
+    }
+    server {
+        listen         8080;
+        server_name    localhost;
+        location / {
+            proxy_cache test;
+            proxy_cache_key mykey|$scheme$proxy_host$request_uri;
+            proxy_cache_valid 200 5d;
+            add_header nginx-cache "$upstream_cache_status"; #可選，值為HIT|MISS，意味是否命中緩存
+            proxy_pass http://backend/js/;
+        }
+    }
+}
+```
+
+緩存清除方法：
+1. `rm -rf /usr/local/proxy_cache/...`
+2. 使用第三方模塊ngx_cache_purge，安裝方式參考反向代理nginx-upstream-fair
+需再配置文件加上：
+```
+#在同級的location 塊中加上
+location ~ /purge(/.*) {
+    proxy_cache_purge zone_name key
+}
+```
+即可向 http://example.com/purge/URL 發送一個 HTTP 請求來執行清除操作，需注意設置的key 不得為\$scheme\$proxy_host$request_uri(URI會跑掉)
+
+* `proxy_no_cache string ...` 定義不將數據進行緩存的條件
+* `proxy_cache_bypass string ...` 定義不存緩存中獲取數據的條件
+以上的條件皆建議配置為 $cookie_nocache $arg_nocache $arg_comment
+$cookie_nocache - 當前請求中的 Cookie 是否包含了名為 nocache 的值。如果請求中包含名為 nocache 的 Cookie，則變量的值為 nocache，否則為一個空字符串。
+$arg_nocache / $arg_comment - 當前請求的查詢參數中是否包含了名為 nocache / comment 的參數。如果請求的查詢參數中包含了名為 nocache / comment 的參數，則變量的值為 nocache / comment，否則為一個空字符串。
+
+## 前後端分離
+簡單範例，將靜態資源放在Nginx 安裝目錄中的html/web 底下
+```
+upstream webservice {
+    server 192.168.200.146:8080;
+}
+server {
+    listen    80;
+    server_name localhost;
+    # 動態資源
+    location /demo {
+        proxy_pass http://webservice;
+    }
+    # 靜態資源
+    location ~/.*\.(png|jpg|gif|js) {
+        root    html/web;
+    }
+    location / {
+        root    html;
+        index   index.html index htm;
+    }
+}
+```
+```htmlmixed=
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Title</title>
+    <script src="js/jquery.min.js"></script>
+    <script>
+        $(function(){
+            // 或是'demo/getText'
+            $.get('http://192.168.200.133/demo/getText',function(data){
+                $("#msg").html(data);
+            });
+        });
+    </script>
+</head>
+<body>
+    <img src="images/logo.jpg"/>
+    <p id="msg"></p>
+</body>
+</html>
+```
+
+## 高可用
+本練習透過Keepalived 軟體達成，此軟體由C 編寫，最初是專為LVS 設計，通過VRRP 協議實現高可用功能。
+### VRRP 協議
+VRRP（Virtual Router Redundancy Protocol，虛擬路由器冗余協議）是一種網絡協議，用於提高路由器可靠性和冗余性。它允許多個路由器（實際上是虛擬路由器）共享一個虛擬 IP 地址，其中一個路由器處於活躍狀態並處理數據流量，而其他路由器處於備用狀態，當活躍路由器不可用時，備用路由器可以快速接管虛擬 IP 地址，確保網絡的連通性。
+
+* 虛擬路由器： VRRP 將一組路由器配置為單個虛擬路由器，它們共享一個虛擬 IP 地址作為默認網關，提供給網絡中的設備。
+* 選舉機制： 在 VRRP 組內，路由器通過選舉確定活躍路由器。優先級最高的路由器將成為活躍路由器，負責接收和處理數據包，其他路由器處於備用狀態。
+* VRRP通告： 活躍路由器周期性地發送 VRRP 通告消息來表明自己的可用性。如果其他路由器停止接收這些通告，它們將推舉一台備用路由器成為新的活躍路由器。
+* 快速故障轉移： 當活躍路由器不可用時（例如發生故障），VRRP 能夠快速地將虛擬 IP 地址轉移到備用路由器上，幾乎不會導致網絡中斷。
+* 虛擬路由器MAC地址： 在網絡中，虛擬路由器有一個固定的虛擬 MAC 地址，當活躍路由器發生變化時，這個虛擬 MAC 地址也會切換到新的活躍路由器。
+
+### 環境準備
+| VIP | IP | 主機名 | 主/從 |
+| -------- | -------- | -------- | -------- |
+|  | 192.168.200.133  | keepalived1 | Master |
+| 192.168.200.222 |  |  |  |
+|  | 192.168.200.122  | keepalived2 | Backup |
+
+安裝Keepalived：
+1. 官網下載 https://keepalived.org/ (此練習下載2.2.8版)，並上傳到主機上
+2. `cd ~`
+3. `mkdir keepalived`
+4. `tar -zxf keepalived-2.2.8.tar.gz -C keepalived/`
+5. `cd keepalived/keepalived-2.2.8/`
+6. `./configure --sysconf=/etc --prefix=/usr/local`
+7. `make && make install`
+
+### 配置文件
+`cp /etc/keepalived/keepalived.conf.sample /etc/keepalived/keepalived.conf`
+`vim /etc/keepalived/keepalived.conf`
+```
+! Configuration File for keepalived
+
+#全局設定
+global_defs {
+   notification_email {
+     #接收皆換通知的收件email
+   }
+   notification_email_from {發信者}
+   smtp_server 192.168.200.1
+   smtp_connect_timeout 30
+   #運行keepalived服務器的一個標示，可以用作發送郵件的主題信息，這裡配置跟主機名稱相同即可
+   router_id keepalived1
+   #默認是不跳過檢查。檢查收到的VRRP通告中的所有地址可能會比較耗時，設置此命令的意思是，如果通告與接收的上一個通告來自相同的master路由器，則不執行檢查(跳過檢查)
+   vrrp_skip_check_adv_addr
+   #嚴格遵守VRRP協議
+   vrrp_strict
+   #在一個接手發送的兩個免費ARP之間的延遲，可以精準到毫秒級，默認為0
+   vrrp_garp_interval 0
+   #在一個網卡上每組va消息之間的延遲時間，默認為0
+   vrrp_gna_interval 0
+}
+
+#VRRP相關設定
+vrrp_instance VI_1 {
+    #MASTER|BACKUP
+    state MASTER
+	#VRRP實例綁定的接口，用於發送VRRP對應的消息包，使用當前服務器的網卡名稱即可
+    interface ens33
+	#VRRP實例的id值，介於0~255，要聯網的文件共用一個id
+    virtual_router_id 51
+	#優先級
+    priority 100
+	#發送VRRP通告的時間間隔，默認1(單位秒)
+    advert_int 1
+    authentication {
+		#驗證方式，默認密碼方式
+        auth_type PASS
+		#密碼，最多8位
+        auth_pass 1111
+    }
+	#可以多組
+    virtual_ipaddress {
+        192.168.200.222 #要聯網的文件共用一個ip
+    }
+}
+
+#LVS相關設定，這邊就不關注
+virtual_server 192.168.200.100 443 {
+...
+```
+
+啟動keepalived
+1. `cd /usr/local/sbin/`
+2.  `./keepalived`
+
+keepalived script
+```
+vrrp_script 腳本名稱
+{
+    script "腳本位置"
+    interval 3 #執行時間間隔
+    weight -20 #動態調整vrrp_instance的優先級
+}
+```
+1. `vim /etc/keepalived/ck_nginx.sh`
+```
+#!/bin/bash
+num=`ps -C nginx --no-header | wc -l`
+if [ $num -eq 0 ]; then
+ /usr/local/nginx/sbin/nginx
+ sleep 2
+ if [ `ps -C nginx --no-header | wc -l` -wq 0 ]; then
+  killall keepalived
+ fi
+fi
+```
+2. `chmod  755 /etc/keepalived/ck_nginx.sh`
+3. `vim /etc/keepalived/keepalived.conf` 寫在vrrp_instance VI_1 之前與之同級
+```
+vrrp_script ck_nginx{
+    script "/etc/keepalived/ck_nginx.sh"
+    interval 3
+    weight -20
+}
+vrrp_instance VI_1 {
+    state MASTER #如果要實現這樣的HA，state 都改為BACKUP(先啟動的會被認定MASTER)
+    #然後都是非搶占，意味著就算主機修復也不主動爭奪
+    #nopreempt
+    interface ens33
+    virtual_router_id 51
+    priority 100
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+    }
+    virtual_ipaddress {
+        192.168.200.222
+    }
+    #另外也要加上這個
+    track_script{
+        ck_nginx
+    }    
+}
+```
+
+## 下載站點
+透過ngx_http_autoindex_module 實現，該模塊處理以斜槓("/")結尾的請求，並生成目錄列表；此模塊在編譯時就會自動加載
+* `autoindex on|off` 開啟目錄列表輸出，默認off；寫在location 塊
+* `autoindex_exact_size on|off` 對應HTML 格式，指定是否在列表展示文件的詳細大小，默認on(單位bytes)、off則是顯示大概大小(單位kb 或MB 或GB)
+* `autoindex_format html|xml|json|jsonp` 目錄列表的格式，默認html
+* `autoindex_localtime on|off` 對應HTML 格式，顯示時間，默認off(GMT 時間)、on則是文件的服務器時間
+
+example:
+```
+location /download {
+    root /usr/local;
+    autoindex on;
+    autoindex_exact_size on;
+    autoindex_format html;
+    autoindex_localtime on;
+}
+```
+
+## 認證
+透過ngx_http_auth_basic_module 實現，允許通過使用"HTTP 基本身分驗證"協議驗證用戶名及密碼來限制對資源的訪問。此模塊默認就會自動加載，如果不需要則使用參數--without-http_auth_basic_module
+* `auth_basic string|off` 啟用驗證(將字符串返回客戶端做提示)，默認off；寫在location 塊
+* `auth_basic_user_file file` 指定用戶名及密碼所在文件
+
+example:
+```
+location /download {
+    root /usr/local;
+    autoindex on;
+    autoindex_exact_size on;
+    autoindex_format html;
+    autoindex_localtime on;
+    auth_basic 'please input your auth';
+    auth_basic_user_file htpassword;
+}
+```
+用戶名及密碼所在文件需要使用htpassword 工具生成
+* `yum install -y httpd-tools`
+* `htpasswd -c /usr/local/nginx/conf/htpassword username` 創建新文件記錄用戶名和密碼
+* `htpasswd -b /usr/local/nginx/conf/htpassword username password` 文件中新增用戶名和密碼
+* `htpasswd -D /usr/local/nginx/conf/htpassword username` 刪除文件中用戶
+* `htpasswd -v /usr/local/nginx/conf/htpassword username` 驗證文件中用戶
