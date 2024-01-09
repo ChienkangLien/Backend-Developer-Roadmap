@@ -98,3 +98,207 @@ ik_max_word - 盡可能地將文本分得更細致
 2. `vi /usr/share/elasticsearch/config/analysis-ik/IKAnalyzer.cfg.xml` 添加擴展詞庫(指定並新增ext.dic)、或是停用詞庫(指定stopword.dic)
 3. 在詞庫中添加要擴展/停用的詞彙
 4. 退出並重啟es
+
+## 概念
+與關連式資料庫的對比
+| MySQL | Elasticsearch | 說明 |
+| -------- | -------- | -------- |
+| Table | Index  | 索引(index)，就是文檔的集合，類似資料庫的表(table) |
+| Row | Document | 文檔(document)，就是一條條的資料，類似資料庫中的行(row)，文檔都是JSON 格式 |
+| Column | Field | 字段(field)，就是JSON 文檔中的字段，類似資料庫中的列(column) |
+| Schema | Mapping | mapping(映射)是索引中文檔的約束，例如字段類型約束。類似資料庫中的表結構(schema) |
+| SQL | DSL  | DSL 是Elasticsearch 提供的JSON 風格的請求語句，用來操作Elasticsearch，實現CRUD |
+
+### Mapping
+對索引庫中文檔的約束。以下是一些常見的Mapping屬性：
+
+type：字段數據類型，常見的簡單類型有：
+* 字符串：text(可分詞的文本)、keyword(精確值，例如：品牌、國家、IP位址)
+* 數值：long、integer、short、byte、double、float
+* 布爾：boolean
+* 日期：date
+* 物件：object
+
+index：是否創建索引，默認為true
+analyzer：使用哪種分詞器
+properties：該字段的子字段
+
+### 索引庫操作
+#### 新增
+```json=
+PUT /tutorial #索引庫名稱
+{
+    "mapping":{
+        "properties":{
+            "info":{ #字段名
+                "type":"text",
+                "analyzer":"il_smart"
+            },
+            "email":{ #字段名2
+                "type":"keyword",
+                "index":false
+            },
+            "name":{ #字段名3
+                "preoperties":{
+                    "furstName":{ #子字段
+                        "type":"text"
+                    }
+                }
+            },
+            // ... 略
+        }
+    }
+}
+```
+#### 查詢
+`GET /tutorial #索引庫名`
+
+#### 刪除
+`DELETE /tutorial #索引庫名`
+
+#### 修改
+索引庫和mapping 一旦創建無法修改，但是可以添加新的字段
+```json=
+PUT /tutorial/_mapping
+{
+    "properties":{
+        "age":{ #新字段名
+            "type":"integer"
+        }
+    }
+}
+```
+
+### 文檔操作
+#### 新增
+不寫id 的話，Elasticsearch 會自動添加
+```json=
+POST /tutorial/_doc/1 #索引庫名/_doc/文檔id
+{
+    "info":"JAVA 課程",
+    "email":"test@abc.com",
+    "name":{
+        "firstName":"小明",
+        "lastName":"王"
+    }
+}
+```
+#### 查詢
+`GET /tutorial/_doc/1 #索引庫名/_doc/文檔id`
+返回的數據，比較重要的filed：
+* _index：索引庫
+* _id：文檔id
+* _version：文檔版本
+* _source：原始文檔
+#### 刪除
+`DELETE /tutorial/_doc/1 #索引庫名/_doc/文檔id`
+#### 修改
+1. 全量修改，會刪除舊文檔、添加新文檔；若宣告的id 對應的文檔不存在，則會直接新增文檔
+```json=
+PUT /tutorial/_doc/1 #索引庫名/_doc/文檔id
+{
+    "info":"JAVA 課程",
+    "email":"hello@abc.com",
+    "name":{
+        "firstName":"大壯",
+        "lastName":"陳"
+    }
+}
+```
+2. 增量修改，只修改指定字段值
+```json=
+POST /tutorial/_update/1 #索引庫名/_doc/文檔id
+{
+    "doc":{
+        "email:"hello@abc.com"
+    }
+}
+```
+
+## 客戶端操作
+### 事前準備
+MySQL
+```sql=
+CREATE TABLE `tb_hotel` (
+    `id` bigint(20) NOT NULL PRIMARY KEY COMMENT '飯店ID',
+    `name` VARCHAR(255) NOT NULL COMMENT '飯店名稱',
+    `address` VARCHAR(255) NOT NULL COMMENT '地址',
+    `price` int(10) NOT NULL COMMENT '價格',
+    `score` int(2) NOT NULL COMMENT '評分',
+    `brand` VARCHAR(32) NOT NULL COMMENT '品牌',
+    `city` VARCHAR(32) NOT NULL COMMENT '城市',
+    `star_name` VARCHAR(16) DEFAULT NULL COMMENT '星級',
+    `business` VARCHAR(255) DEFAULT NULL COMMENT '商圈',
+    `latitude` VARCHAR(32) NOT NULL COMMENT '緯度',
+    `longitude` VARCHAR(32) NOT NULL COMMENT '經度',
+    `pic` VARCHAR(255) DEFAULT NULL COMMENT '圖片'
+);
+```
+對應的DSL
+```json=
+PUT /hotel
+{
+  "mappings": {
+    "properties": {
+      "id": {
+        "type": "keyword"
+      },
+      "name": {
+        "type": "text",
+        "analyzer":"ik_max_word",
+        "copy_to":"all"
+      },
+      "address": {
+        "type": "keyword",
+        "index": false
+      },
+      "price": {
+        "type": "integer"
+      },
+      "score": {
+        "type": "integer"
+      },
+      "brand": {
+        "type": "keyword",
+        "copy_to":"all"
+      },
+      "city": {
+        "type": "keyword"
+      },
+      "star_name": {
+        "type": "keyword"
+      },
+      "business": {
+        "type": "keyword",
+        "copy_to":"all"
+      },
+      "location": {
+        "type": "geo_point"
+      },
+      "pic": {
+        "type": "keyword",
+        "index": false
+      },
+      "all":{
+        "type":"text",
+        "analyzer":"ik_max_word"
+      }
+    }
+  }
+}
+```
+ES 中支持兩種地理座標資料類型
+* geo_point：由緯度和經度確定的一個點
+* geo_shape：有多個geo_point 組成的複雜幾何圖形，例如一條直線
+
+字段拷貝可以使用copy_to 屬性將當前字段拷貝到指定字段
+```json=
+"all":{
+    "type":"text",
+    "analyzer":"ik_max_word"
+},
+"brand":{
+    "type":"keyword",
+    "copy_to":"all"
+}
+```
