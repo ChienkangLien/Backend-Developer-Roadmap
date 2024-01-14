@@ -302,3 +302,318 @@ ES 中支持兩種地理座標資料類型
     "copy_to":"all"
 }
 ```
+
+## DSL
+* 查詢所有：查詢出所有資料，一般測試用。例如：match_all
+* 全文檢索(full text)查詢：利用分詞器對用戶輸入內容分詞，然後在倒排索引庫中匹配。例如：match_query、multi_match_query
+* 精確查詢：根據精確詞條值查找資料，一般是查找keyword、數值、日期、boolean 等類型字段。例如：ids、range、term
+* 地理(geo)查詢：根據經緯度查詢，例如：geo_distance、geo_bounding_box
+* 複合(compound)查詢：可以將上述各種條件組合起來，例如：bool、function_score
+
+基本語法
+```json=
+GET /indexName/_search  #/索引名稱/_search
+{
+  "query": {
+    "查詢類型": {
+      "查詢條件": "條件值"
+    }
+  }
+}
+```
+1. 查詢所有
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+```
+2. 全文檢索 - match查詢
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "match": {
+      "all": "台北善導寺"  #在之前有將name/brand/business copy_to 到all字段中
+    }
+  }
+}
+```
+3. 全文檢索 - multi_match
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "台北",
+      "fields"; ["brand", "name", "business"]
+    }
+  }
+}
+```
+4. 精確查詢 - term(根據詞條精確值查詢)
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "term": {
+      "city": {
+        "value": "台北市"  
+      }
+    }
+  }
+}
+```
+5. 精確查詢 - range(根據值的範圍查詢)
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "range": {
+      "price": {
+        "gt": 1000,  #<
+        "lte": 5000  #>=
+      }
+    }
+  }
+}
+```
+6. 地理查詢 - geo_bounding_box：查詢geo_point 值落在某個矩形範圍的所有文檔
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "geo_bounding_box": {
+      "location": {
+        "top_left": {
+          "lat": 40.73,
+          "lon": -74.1
+        },
+        "bottom_right": {
+          "lat": 40.01,
+          "lon": -71.12
+        }
+      }
+    }
+  }
+}
+```
+7. 地理查詢 - geo_distance：查詢到指定中心點小於某個距離值的所有文檔
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "geo_distance": {
+      "distance": "10km",
+      "location": "40.7128, -74.0060"
+    }
+  }
+}
+```
+8. 複合查詢 - function_score：可以控制文檔相關性算分、控制文檔排名
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "function_score": {
+      "query": {  #原始查詢條件，搜索文檔並根據相關性打分(query score)
+        "match": {
+          "all": "台北"
+        }
+      },
+      "functions": [
+        {
+          "filter": {  #過濾條件，符合條件的文檔才會被算分
+            "term": {
+              "brand": "喜來登"
+            }
+          },
+          "weight": 3  #算分函數
+        }
+      ],
+      "boost_mode": "multiply"  #加權模式
+    }
+  }
+}
+```
+算分函數：算分函數的結果稱為function score，將會與query score 運算，得到新分數，常見的有：
+* weight 給一個常量值，作為函數結果
+* field_value_factor 用文檔中的某個字段作為結果
+* random_score 隨機生成一個值，作為結果
+* script_score 自定義計算公式，作為結果
+
+加權模式：定義function score 與query score 的運算方式，包括：
+* multiply 兩者相乘，默認使用
+* replace 用function score 替換query score
+* 其他 例如sum、avg、max、min
+
+9. 複合查詢 - Bool Query：是一個或多個查詢子句的組合。子查詢的組合方式有：must、should、must_not(不參與打分)、filter(不參與打分)
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "match": {
+            "name": "喜來登"
+          }
+        }
+      ],
+      "must_not": [
+        {
+          "range": {
+            "price": {
+              "gt": 4000
+            }
+          }
+        }
+      ],
+      "filter": [
+        {
+          "geo_distance": {
+            "distance": "10km",
+            "location": {
+              "lat": 31.21,
+              "lon": 121.5
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+### 排序
+若使用排序，就不會對文檔算分
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "match_all": {}
+  },
+  "sort": [
+    {
+      "score": "desc"
+    },
+    {
+      "price": "asc"
+    }
+  ]
+}
+```
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "match_all": {}
+  },
+  "sort": [
+    {
+      "_geo_distance": {
+        "location": {
+          "lat": 31.25,
+          "lon": 121.55
+        },
+        "order": "asc",
+        "unit": "km"
+      }
+    }
+  ]
+}
+```
+### 分頁
+默認只返回10筆資料
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "match_all": {}
+  },
+  "sort": {
+      "score": "desc"
+  },
+  "from": 220,  #分頁開始的位置，默認0
+  "size": 10  #顯示的資料筆數，默認10
+}
+```
+
+深度分頁問題
+ES 是分布式的，例如按price 排序後，獲取from = 990、size = 10 的資料：
+1. 首先在每個資料分片上都排序並查詢前1000筆文檔
+2. 將所有節點的結果聚合，在內存中重新排序選出前1000筆文檔
+3. 最後從這1000筆中，選取從990開始的10筆文檔
+
+避免對資源的消耗，ES 設定結果集查詢的上限是10000(from = 9991、size = 10 會失敗)，解決方案是透過search after：
+
+假設查詢
+```json=
+{
+  "size": 10,
+  "query": {
+    "match" : {
+      "title" : "elasticsearch"
+    }
+  },
+  "sort": [
+    {"date": "asc"},
+    {"_uid": "desc"}
+  ]
+}
+```
+得到了
+```json=
+{
+  "size": 10,
+  "query": {
+    "match" : {
+      "title" : "elasticsearch"
+      }
+    },
+  "search_after": [1463538857, "tweet#654323"],
+  "sort": [
+    {"date": "asc"},
+    {"_uid": "desc"}
+  ]
+}
+```
+接著我要繼續搜尋下一頁結果，加入search_after
+```json=
+{
+  "size": 10,
+  "query": {
+    "match" : {
+      "title" : "elasticsearch"
+    }
+  },
+  "sort": [
+    {"date": "asc"},
+    {"_uid": "desc"}
+  ],
+  "search_after": [1463538857, "tweet#654323"]
+}
+```
+### highlight
+把搜尋關鍵字突出顯示
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "match": {
+      "all": "善導寺"
+    }
+  },
+  "highlight": {
+    "fields": {
+      "name": {
+        "pre_tags": "<em>",  #前置標籤，默認即使用<em>，可省略
+        "post_tags": "</em>",  #後置標籤，默認即使用<em>，可省略
+        "require_field_match": "false" #默認情況下，ES 搜索字段需要與highlight 字段一致，否則要將此設置false
+      }
+    }
+  }
+}
+```
