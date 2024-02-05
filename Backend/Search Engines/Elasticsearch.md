@@ -126,21 +126,21 @@ properties：該字段的子字段
 ### 索引庫操作
 #### 新增
 ```json=
-PUT /tutorial #索引庫名稱
+PUT /tutorial //索引庫名稱
 {
     "mapping":{
         "properties":{
-            "info":{ #字段名
+            "info":{ //字段名
                 "type":"text",
                 "analyzer":"il_smart"
             },
-            "email":{ #字段名2
+            "email":{ //字段名2
                 "type":"keyword",
                 "index":false
             },
-            "name":{ #字段名3
+            "name":{ //字段名3
                 "preoperties":{
-                    "furstName":{ #子字段
+                    "furstName":{ //子字段
                         "type":"text"
                     }
                 }
@@ -162,7 +162,7 @@ PUT /tutorial #索引庫名稱
 PUT /tutorial/_mapping
 {
     "properties":{
-        "age":{ #新字段名
+        "age":{ //新字段名
             "type":"integer"
         }
     }
@@ -173,7 +173,7 @@ PUT /tutorial/_mapping
 #### 新增
 不寫id 的話，Elasticsearch 會自動添加
 ```json=
-POST /tutorial/_doc/1 #索引庫名/_doc/文檔id
+POST /tutorial/_doc/1 //索引庫名/_doc/文檔id
 {
     "info":"JAVA 課程",
     "email":"test@abc.com",
@@ -195,7 +195,7 @@ POST /tutorial/_doc/1 #索引庫名/_doc/文檔id
 #### 修改
 1. 全量修改，會刪除舊文檔、添加新文檔；若宣告的id 對應的文檔不存在，則會直接新增文檔
 ```json=
-PUT /tutorial/_doc/1 #索引庫名/_doc/文檔id
+PUT /tutorial/_doc/1 //索引庫名/_doc/文檔id
 {
     "info":"JAVA 課程",
     "email":"hello@abc.com",
@@ -207,7 +207,7 @@ PUT /tutorial/_doc/1 #索引庫名/_doc/文檔id
 ```
 2. 增量修改，只修改指定字段值
 ```json=
-POST /tutorial/_update/1 #索引庫名/_doc/文檔id
+POST /tutorial/_update/1 //索引庫名/_doc/文檔id
 {
     "doc":{
         "email:"hello@abc.com"
@@ -312,7 +312,7 @@ ES 中支持兩種地理座標資料類型
 
 基本語法
 ```json=
-GET /indexName/_search  #/索引名稱/_search
+GET /indexName/_search  //索引名稱/_search
 {
   "query": {
     "查詢類型": {
@@ -336,7 +336,7 @@ GET /hotel/_search
 {
   "query": {
     "match": {
-      "all": "台北善導寺"  #在之前有將name/brand/business copy_to 到all字段中
+      "all": "台北善導寺"  //在之前有將name/brand/business copy_to 到all字段中
     }
   }
 }
@@ -373,8 +373,8 @@ GET /hotel/_search
   "query": {
     "range": {
       "price": {
-        "gt": 1000,  #<
-        "lte": 5000  #>=
+        "gt": 1000,  // <
+        "lte": 5000  // >=
       }
     }
   }
@@ -418,22 +418,22 @@ GET /hotel/_search
 {
   "query": {
     "function_score": {
-      "query": {  #原始查詢條件，搜索文檔並根據相關性打分(query score)
+      "query": {  //原始查詢條件，搜索文檔並根據相關性打分(query score)
         "match": {
           "all": "台北"
         }
       },
       "functions": [
         {
-          "filter": {  #過濾條件，符合條件的文檔才會被算分
+          "filter": {  //過濾條件，符合條件的文檔才會被算分
             "term": {
               "brand": "喜來登"
             }
           },
-          "weight": 3  #算分函數
+          "weight": 3  //算分函數
         }
       ],
-      "boost_mode": "multiply"  #加權模式
+      "boost_mode": "multiply"  //加權模式
     }
   }
 }
@@ -536,8 +536,8 @@ GET /hotel/_search
   "sort": {
       "score": "desc"
   },
-  "from": 220,  #分頁開始的位置，默認0
-  "size": 10  #顯示的資料筆數，默認10
+  "from": 220,  //分頁開始的位置，默認0
+  "size": 10  //顯示的資料筆數，默認10
 }
 ```
 
@@ -609,11 +609,92 @@ GET /hotel/_search
   "highlight": {
     "fields": {
       "name": {
-        "pre_tags": "<em>",  #前置標籤，默認即使用<em>，可省略
-        "post_tags": "</em>",  #後置標籤，默認即使用<em>，可省略
-        "require_field_match": "false" #默認情況下，ES 搜索字段需要與highlight 字段一致，否則要將此設置false
+        "pre_tags": "<em>",  //前置標籤，默認即使用<em>，可省略
+        "post_tags": "</em>",  //後置標籤，默認即使用<em>，可省略
+        "require_field_match": "false" //默認情況下，ES 搜索字段需要與highlight 字段一致，否則要將此設置false
       }
     }
   }
 }
 ```
+
+## 聚合(Aggregations)
+用於對檢索結果進行數據分析和統計。允許對數據進行分組、計算統計信息，並生成各種有用的摘要信息。
+
+### 桶聚合（Bucket Aggregations）
+將文檔劃分為不同的桶（buckets），每個桶代表一個分組。常見的桶聚合包括：
+* Terms： 根據字段的值劃分文檔為不同的桶。
+```json=
+GET /hotel/_search
+{
+  "size": 0, //指定了搜索結果的大小。在這裡，size: 0 表示不返回實際的搜索文檔，僅返回聚合結果
+  "aggs": { //定義聚合
+    "brandAgg": { //給聚合取名
+      "terms": { //表示使用了 terms 聚合
+        "field": "brand", //參與聚合的字段
+        "size": 10, //希望獲取的聚合結果數量
+        "order": {
+          "_count": "asc" //也可按照統計後的文檔數量排序，默認降序(desc)
+        }
+      }
+    }
+  }
+}
+```
+資料量大時，也可限定聚合範圍：
+```json=
+GET /hotel/_search
+{
+  "query": {
+    "range": {
+      "price": {
+        "lte": 20000
+      }
+    }
+  }, 
+  "size": 0,
+  "aggs": {
+    "brandAgg": {
+      "terms": {
+        "field": "brand",
+        "size": 10
+      }
+    }
+  }
+}
+```
+* Date Histogram： 將時間數據劃分為時間段，例如每天、每小時等。
+* Range： 將數值區間劃分為不同的桶。
+
+### 指標聚合（Metric Aggregations）
+計算文檔集合的數值指標，如平均值、總和、最大值、最小值等。
+* Avg： 計算數值字段的平均值。
+* Sum： 計算數值字段的總和。
+* Min/Max： 計算數值字段的最小值和最大值。
+* Stats：同時求Avg、Sum、Min、Max 等。
+```json=
+GET /hotel/_search
+{
+  "size": 0,
+  "aggs": {
+    "brandAgg": {
+      "terms": {
+        "field": "brand",
+        "size": 10,
+        "order": {
+          "scoreAgg.avg": "desc" //可使用 stats 結果排序
+        }
+      },
+      "aggs": { //是brands聚合的子聚合，也就是分組後對每組在做分別計算
+        "scoreAgg": { //給聚合取名
+          "stats": { //表示使用 stats 聚合
+            "field": "score" //計算了 score 字段
+          }
+        }
+      }
+    }
+  }
+}
+```
+### Pipeline 聚合（Pipeline Aggregations）
+對其他聚合結果進行進一步的計算，如對平均值計算標準差等。
