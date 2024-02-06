@@ -231,7 +231,8 @@ CREATE TABLE `tb_hotel` (
     `business` VARCHAR(255) DEFAULT NULL COMMENT '商圈',
     `latitude` VARCHAR(32) NOT NULL COMMENT '緯度',
     `longitude` VARCHAR(32) NOT NULL COMMENT '經度',
-    `pic` VARCHAR(255) DEFAULT NULL COMMENT '圖片'
+    `pic` VARCHAR(255) DEFAULT NULL COMMENT '圖片',
+    `isAD` int(1) NOT NULL COMMENT '廣告'
 );
 ```
 對應的DSL
