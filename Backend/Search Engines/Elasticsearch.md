@@ -619,6 +619,21 @@ GET /hotel/_search
 }
 ```
 
+### 搜尋建議
+對於不同類型的欄位，有不同的搜索建議和最佳實踐：
+
+Text 欄位：
+* 最佳實踐： 對於 Text 欄位，通常用於全文搜索，這意味着 Elasticsearch會對文本進行分詞，並考慮各種分析過程（如分詞、過濾、正規化等）。使用 Match Query、Multi-Match Query、Query String Query 等全文搜索查詢方式，這些查詢會自動對搜索詞進行分詞和處理，匹配文檔中的詞彙。
+* 建議避免： 不建議直接使用 Term Level 查詢（例如 Term Query、Terms Query）來對 Text 欄位進行搜索，因為這樣的搜索會將搜索詞與索引中的原始詞彙進行精確匹配，可能會忽略分詞器的處理過程，造成不符合預期的搜索結果。
+
+Keyword 欄位：
+* 最佳實踐： Keyword 欄位通常存儲未經分析的原始值，用於精確匹配和聚合。對於 Keyword 欄位，建議使用 Exact Match 查詢（例如 Term Query）或者聚合操作（例如 Terms Aggregation），這些操作直接對原始值進行匹配，不考慮分析過程。
+* 建議避免： 不建議使用 Full Text Search 查詢（例如 Match Query）來對 Keyword 欄位進行搜索，因為這樣的搜索會對搜索詞進行分詞和處理，可能會導致不符合預期的搜索結果。
+
+數值型欄位（如整數、浮點數等）：
+* 最佳實踐： 對於數值型欄位，建議使用 Range Query（範圍查詢）或其他數值型查詢（如 Numeric Range Aggregation）進行範圍查詢或聚合操作。這些操作可以根據數值的大小範圍進行匹配和聚合。
+* 建議避免： 避免使用 Full Text Search 查詢來搜索數值型欄位，這樣的搜索可能會導致不正確的結果。
+
 ## 聚合(Aggregations)
 用於對檢索結果進行數據分析和統計。允許對數據進行分組、計算統計信息，並生成各種有用的摘要信息。
 
@@ -699,3 +714,47 @@ GET /hotel/_search
 ```
 ### Pipeline 聚合（Pipeline Aggregations）
 對其他聚合結果進行進一步的計算，如對平均值計算標準差等。
+
+## 自動補全
+基於Completion Suggester 查詢來實現，針對已經索引的文本字段提供自動補全建議。
+* 參與補全查詢的字段須視completion 類型
+```json=
+PUT /autocomplete_index
+{
+  "mappings": {
+    "properties": {
+      "title": {
+        "type": "completion"
+      }
+    }
+  }
+}
+```
+* 字段的內容一般是用來補全的多個詞條形成的陣列
+```json=
+POST /autocomplete_index/_doc
+{
+  "title": ["apple", "pie"]
+}
+
+POST /autocomplete_index/_doc
+{
+  "title": ["banana", "split"]
+}
+```
+查詢語法：
+```json=
+POST /autocomplete_index/_search
+{
+  "suggest": {
+    "title-suggest": { //自訂查詢名稱
+      "text": "app", //關鍵字、也可以想成是前綴
+      "completion": {
+        "field": "title", //補全查詢的字段
+        "skip_duplicates": true, //跳過重複的
+        "size": 10
+      }
+    }
+  }
+}
+```
