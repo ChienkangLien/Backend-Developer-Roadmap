@@ -758,3 +758,150 @@ POST /autocomplete_index/_search
   }
 }
 ```
+
+## 集群
+利用docker compose 搭建
+```yaml=
+version: '2'
+
+services:
+  es01:
+    image: elasticsearch:7.12.1
+    container_name: es01
+    environment:
+      - node.name=es-node1
+      - cluster.name=my-cluster
+      - discovery.seed_hosts=es02,es03
+      - cluster.initial_master_nodes=es-node1,es-node2,es-node3
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"  # 調整内存設置，根據需要進行修改
+    volumes:
+      - esdata1:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - elastic
+
+  es02:
+    image: elasticsearch:7.12.1
+    container_name: es02
+    environment:
+      - node.name=es-node2
+      - cluster.name=my-cluster
+      - discovery.seed_hosts=es01,es03
+      - cluster.initial_master_nodes=es-node1,es-node2,es-node3
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - esdata2:/usr/share/elasticsearch/data
+    ports:
+      - "9201:9200"
+    networks:
+      - elastic
+
+  es03:
+    image: elasticsearch:7.12.1
+    container_name: es03
+    environment:
+      - node.name=es-node3
+      - cluster.name=my-cluster
+      - discovery.seed_hosts=es01,es02
+      - cluster.initial_master_nodes=es-node1,es-node2,es-node3
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - esdata3:/usr/share/elasticsearch/data
+    ports:
+      - "9202:9200"
+    networks:
+      - elastic
+
+volumes:
+  esdata1:
+    driver: local
+  esdata2:
+    driver: local
+  esdata3:
+    driver: local
+
+networks:
+  elastic:
+    driver: bridge
+```
+
+啟動docker 前還需要修改 /etc/sysctl.conf
+1. `vi /etc/sysctl.conf`
+2. 增加 `vm.max_map_count = 262144`
+3. `sysctl -p` 使之生效
+4. `docker-compose up -d` 啟動docker compose
+
+### 監控
+如果還是使用kibana 不太方便，監控集群上的配置較為複雜；改用cerebro
+https://github.com/lmenezes/cerebro
+下載zip 於本地端解壓縮後執行bin/cerebro.bat，啟動時遇到錯誤： java.lang.reflect.InaccessibleObjectException: Unable to make protected final java.lang.Class java.lang.ClassLoader.defineClass(java.lang.String,byte[],int,int,java.security.ProtectionDomain) throws java.lang.ClassFormatError accessible: module java.base does not "opens java.lang" to unnamed module @1cb3ec38 以及java.lang.IllegalAccessError: class play.utils.Resources$ (in unnamed module @0x69c79f09) cannot access class sun.net.www.protocol.file.FileURLConnection (in module java.base) because module java.base does not export sun.net.www.protocol.file to unnamed module @0x69c79f09
+
+需在cerebro.bat 中`"%_JAVACMD%" !_JAVA_OPTS! !CEREBRO_OPTS! -cp "%APP_CLASSPATH%" %MAIN_CLASS% !_APP_ARGS!`之前加入`set _JAVA_OPTS=--add-opens java.base/java.lang=ALL-UNNAMED --add-exports java.base/sun.net.www.protocol.file=ALL-UNNAMED`
+
+啟動成功後即可訪問 http://localhost:9000/ 輸入節點ex: http://192.168.191.133:9200/ 取得集群的資訊，並且可以透過UI 來操作索引庫。
+
+### 概念
+```json=
+PUT my_index
+{
+    "settings": {
+        "number_of_shards": 3,  // 設置分片數量
+        "number_of_replicas": 2  // 設置副本數量
+    },
+    "mappings": {
+        "properties": {
+            // mapping 映射定義...
+        }
+    }
+}
+```
+
+節點的職責劃分：
+| 節點類型 | 配置參數 | 默認值 | 節點職責 |
+| -------- | -------- | -------- | -------- |
+| master eligible | node.master | true | 備選主節點：主節點可以管理和紀錄集群狀態、決定分片在哪個節點、處理創建和刪除索引庫的請求 |
+| data | node.data | true | 數據節點：存儲數據、搜尋、聚合、CRUD |
+| ingest | node.ingest | true | 資料存儲之前的預處理 |
+| coordinating | 以上三個參數都為false 則為coordinating 節點 | 無 | 路由請求到其他節點，合併其他節點處理的結果、返回給用戶 |
+
+默認一個節點可以身兼多個類型，但在集群環境下，會依照實際業務需求分離開來。
+![image](./images/node.png)
+
+要查看資料的詳細內容：
+```json=
+// request
+{   
+    "explain":true,
+    "query": {
+        "match_all":{}
+    }
+}
+```
+```json=
+// response
+...
+    {
+        "_shard": "[my_index][1]",
+        "_node": "gDkyfQZKRRac6M8xxFK8MA",
+        "_index": "my_index",
+        ...
+    }
+...
+```
+
+### 操作
+分布式存儲，透過hash 算法來計算文檔應該存儲到哪個分片：shard = hash(_routing) % number_of_shards
+* _routing 默認是文檔的id
+* 索引庫一旦創建，分片數量不能修改
+
+![image](./images/insert.png)
+
+分布式查詢
+* scatter phase：分散階段，coordinating node 會把請求分發到每一個分片
+* gather phase：聚集階段，coordinating node 彙總data node 的搜尋結果，並處理為最終結果返回給用戶
+
+![image](./images/search.png)
+
+### 故障轉移
+如果發現有節點故障，會立即將該節點的資料分片遷移到其他節點，若該節點原先式主節點、也會重新選舉主節點。
