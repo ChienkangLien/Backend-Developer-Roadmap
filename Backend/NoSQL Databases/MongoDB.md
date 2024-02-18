@@ -346,3 +346,464 @@ db.comment.find({$or:[ {userid:"1003"} ,{likenum:{$lt:1000} }]})
 "stage" : "IXSCAN"，基於索引的掃描。
 
 而當查詢條件和查詢的投影僅包含索引字段時，MongoDB 會直接從索引返回結果，而不掃描任何文檔或將文檔帶入內存(省略FETCH 的步驟)。
+
+## HA
+MongoDB 的replicate 有兩種類型及三種腳色
+
+兩種類型：
+1. 主節點（Primary）類型：資料操作的主要連接點，可讀寫。
+2. 次要（輔助、從）節點（Secondaries）類型：資料冗余備份節點，可以讀或選舉。
+
+三種角色：
+1. 主要成員（Primary）：主要接收所有寫操作，也就是主節點。
+2. 副本成員（Replicate）：從主節點通過複製操作以維護相同的資料集，即備份資料，不可寫操作，但可以讀操作（但需要配置）。是默認的一種從節點類型。
+3. 仲裁者（Arbiter）：不保留任何資料的副本，只具有投票選舉作用。當然也可以將仲裁服務器維護為副本集的一部分，即副本成員同時也可以是仲裁者。也是一種從節點類型。
+
+### 架構實作
+接下來操作一主一從一仲裁的架構(以port 號區分)，叢集名稱取作myrs
+1. 建立資料夾
+```shell=
+mkdir -p /mongodb/replica_sets/myrs_27017/log \ &
+mkdir -p /mongodb/replica_sets/myrs_27017/data/db
+mkdir -p /mongodb/replica_sets/myrs_27018/log \ &
+mkdir -p /mongodb/replica_sets/myrs_27018/data/db
+mkdir -p /mongodb/replica_sets/myrs_27019/log \ &
+mkdir -p /mongodb/replica_sets/myrs_27019/data/db
+```
+2. 配置文件
+```shell=
+vim /mongodb/replica_sets/myrs_27017/mongod.conf
+```
+將以下貼上
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/replica_sets/myrs_27017/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+storage:
+    #mongod實例存儲其資料的目錄。storage.dbPath設置僅適用於mongod。
+    ##The directory where the mongod instance stores its data.Default Value is "/data/db".
+    dbPath: "/mongodb/replica_sets/myrs_27017/data/db"
+    journal:
+        #啟用或禁用持久性日誌以確保資料文件保持有效和可恢復。
+        enabled: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27017
+replication:
+    #副本集的名稱
+    replSetName: myrs
+```
+```shell=
+vim /mongodb/replica_sets/myrs_27018/mongod.conf
+```
+將以下貼上
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/replica_sets/myrs_27018/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+storage:
+    #mongod實例存儲其資料的目錄。storage.dbPath設置僅適用於mongod。
+    ##The directory where the mongod instance stores its data.Default Value is "/data/db".
+    dbPath: "/mongodb/replica_sets/myrs_27018/data/db"
+    journal:
+        #啟用或禁用持久性日誌以確保資料文件保持有效和可恢復。
+        enabled: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27018
+replication:
+    #副本集的名稱
+    replSetName: myrs
+```
+```shell=
+vim /mongodb/replica_sets/myrs_27019/mongod.conf
+```
+將以下貼上
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/replica_sets/myrs_27019/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+storage:
+    #mongod實例存儲其資料的目錄。storage.dbPath設置僅適用於mongod。
+    ##The directory where the mongod instance stores its data.Default Value is "/data/db".
+    dbPath: "/mongodb/replica_sets/myrs_27019/data/db"
+    journal:
+        #啟用或禁用持久性日誌以確保資料文件保持有效和可恢復。
+        enabled: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27019
+replication:
+    #副本集的名稱
+    replSetName: myrs
+```
+3. 啟動
+```shell=
+/usr/local/mongodb/bin/mongod -f /mongodb/replica_sets/myrs_27017/mongod.conf
+
+/usr/local/mongodb/bin/mongod -f /mongodb/replica_sets/myrs_27018/mongod.conf
+
+/usr/local/mongodb/bin/mongod -f /mongodb/replica_sets/myrs_27019/mongod.conf
+```
+
+4. 初始化配置副本集和主節點：使用客戶端命令連接連接主節點(27017節點) `/usr/local/mongodb/bin/mongo` 進去之後
+`rs.initiate(configuration)` 這裡就使用默認的配置就好，不帶參數
+
+| Parameter | Type | Description |
+| -------- | -------- | -------- |
+| configuration | document | 可選的。指定新副本集配置文件。如果未指定配置，MongoDB 將使用預設的副本集配置 |
+```shell=
+> rs.initiate()
+{
+        "info2" : "no configuration specified. Using a default configuration for the set",
+        "me" : "192.168.191.133:27017",
+        "ok" : 1 // ok的值為1，說明創建成功
+}
+```
+5. 加入從節點`rs.add(host, arbiterOnly)`
+
+| Parameter | Type | Description |
+| -------- | -------- | -------- |
+| host | string or document | 要添加到副本集的新成員。 指定為字符串或配置文檔：1）如果是一個字符串，則指定新成員的主機名和可選的端口號；2）如果是一個文檔，指定在members 陣列中找到的副本集成員配置文檔；您必須在成員配置文檔中指定主機字段 |
+| arbiterOnly | boolean | 可選的。 僅在host 值為字符串時適用。 如果為true，則添加的主機是仲裁者 |
+
+以下是成員配置文檔範例：
+```
+{
+    _id: <int>,
+    host: <string>, // required
+    arbiterOnly: <boolean>,
+    buildIndexes: <boolean>,
+    hidden: <boolean>,
+    priority: <number>,
+    tags: <document>,
+    slaveDelay: <int>,
+    votes: <number>
+}
+```
+```shell=
+> rs.add("192.168.191.133:27018")
+{
+        "ok" : 1,
+        "operationTime" : Timestamp(1708263403, 1),
+        "$clusterTime" : {
+                "clusterTime" : Timestamp(1708263403, 1),
+                "signature" : {
+                        "hash" : BinData(0,"AAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+                        "keyId" : NumberLong(0)
+                }
+        }
+}
+```
+6. 加入仲裁節點，這裡使用另一個指令`rs.addArb(host)`
+```shell=
+> rs.addArb("192.168.191.133:27019")
+{
+        "ok" : 1,
+        "operationTime" : Timestamp(1708263547, 2),
+        "$clusterTime" : {
+                "clusterTime" : Timestamp(1708263547, 2),
+                "signature" : {
+                        "hash" : BinData(0,"AAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+                        "keyId" : NumberLong(0)
+                }
+        }
+}
+```
+
+也可查看配置內容`rs.conf(configuration)`
+```shell=
+> rs.conf()
+{
+        "_id" : "myrs", // 副本集的配置資料存儲的主鍵值，默認就是副本集的名字
+        "version" : 3,
+        "protocolVersion" : NumberLong(1),
+        "writeConcernMajorityJournalDefault" : true,
+        "members" : [ // 副本集成員陣列
+                {
+                        "_id" : 0,
+                        "host" : "192.168.191.133:27017",
+                        "arbiterOnly" : false,
+                        "buildIndexes" : true,
+                        "hidden" : false,
+                        "priority" : 1,
+                        "tags" : {
+
+                        },
+                        "slaveDelay" : NumberLong(0),
+                        "votes" : 1
+                },
+                {
+                        "_id" : 1,
+                        "host" : "192.168.191.133:27018",
+                        "arbiterOnly" : false,
+                        "buildIndexes" : true,
+                        "hidden" : false,
+                        "priority" : 1,
+                        "tags" : {
+
+                        },
+                        "slaveDelay" : NumberLong(0),
+                        "votes" : 1
+                },
+                {
+                        "_id" : 2,
+                        "host" : "192.168.191.133:27019",
+                        "arbiterOnly" : true, // 仲裁
+                        "buildIndexes" : true,
+                        "hidden" : false,
+                        "priority" : 0,
+                        "tags" : {
+
+                        },
+                        "slaveDelay" : NumberLong(0),
+                        "votes" : 1
+                }
+        ],
+        "settings" : {
+                "chainingAllowed" : true,
+                "heartbeatIntervalMillis" : 2000,
+                "heartbeatTimeoutSecs" : 10,
+                "electionTimeoutMillis" : 10000,
+                "catchUpTimeoutMillis" : -1,
+                "catchUpTakeoverDelayMillis" : 30000,
+                "getLastErrorModes" : {
+
+                },
+                "getLastErrorDefaults" : {
+                        "w" : 1,
+                        "wtimeout" : 0
+                },
+                "replicaSetId" : ObjectId("65d20407f308e35b2881de12")
+        }
+}
+```
+或是`rs.status()` 查看叢集狀態。
+```shell=
+> rs.status()
+{
+        "set" : "myrs", // 叢集名稱
+        "date" : ISODate("2024-02-18T13:41:36.819Z"),
+        "myState" : 1, // 1 即狀態正常
+        "term" : NumberLong(1),
+        "syncingTo" : "",
+        "syncSourceHost" : "",
+        "syncSourceId" : -1,
+        "heartbeatIntervalMillis" : NumberLong(2000),
+        "optimes" : {
+                "lastCommittedOpTime" : {
+                        "ts" : Timestamp(1708263687, 1),
+                        "t" : NumberLong(1)
+                },
+                "readConcernMajorityOpTime" : {
+                        "ts" : Timestamp(1708263687, 1),
+                        "t" : NumberLong(1)
+                },
+                "appliedOpTime" : {
+                        "ts" : Timestamp(1708263687, 1),
+                        "t" : NumberLong(1)
+                },
+                "durableOpTime" : {
+                        "ts" : Timestamp(1708263687, 1),
+                        "t" : NumberLong(1)
+                }
+        },
+        "lastStableCheckpointTimestamp" : Timestamp(1708263667, 1),
+        "electionCandidateMetrics" : {
+                "lastElectionReason" : "electionTimeout",
+                "lastElectionDate" : ISODate("2024-02-18T13:20:07.160Z"),
+                "electionTerm" : NumberLong(1),
+                "lastCommittedOpTimeAtElection" : {
+                        "ts" : Timestamp(0, 0),
+                        "t" : NumberLong(-1)
+                },
+                "lastSeenOpTimeAtElection" : {
+                        "ts" : Timestamp(1708262407, 1),
+                        "t" : NumberLong(-1)
+                },
+                "numVotesNeeded" : 1,
+                "priorityAtElection" : 1,
+                "electionTimeoutMillis" : NumberLong(10000),
+                "newTermStartDate" : ISODate("2024-02-18T13:20:07.162Z"),
+                "wMajorityWriteAvailabilityDate" : ISODate("2024-02-18T13:20:07.191Z")
+        },
+        "members" : [
+                {
+                        "_id" : 0,
+                        "name" : "192.168.191.133:27017",
+                        "health" : 1, // 1 即健康
+                        "state" : 1,
+                        "stateStr" : "PRIMARY",
+                        "uptime" : 1734,
+                        "optime" : {
+                                "ts" : Timestamp(1708263687, 1),
+                                "t" : NumberLong(1)
+                        },
+                        "optimeDate" : ISODate("2024-02-18T13:41:27Z"),
+                        "syncingTo" : "",
+                        "syncSourceHost" : "",
+                        "syncSourceId" : -1,
+                        "infoMessage" : "",
+                        "electionTime" : Timestamp(1708262407, 2),
+                        "electionDate" : ISODate("2024-02-18T13:20:07Z"),
+                        "configVersion" : 3,
+                        "self" : true,
+                        "lastHeartbeatMessage" : ""
+                },
+                {
+                        "_id" : 1,
+                        "name" : "192.168.191.133:27018",
+                        "health" : 1,
+                        "state" : 2,
+                        "stateStr" : "SECONDARY",
+                        "uptime" : 293,
+                        "optime" : {
+                                "ts" : Timestamp(1708263687, 1),
+                                "t" : NumberLong(1)
+                        },
+                        "optimeDurable" : {
+                                "ts" : Timestamp(1708263687, 1),
+                                "t" : NumberLong(1)
+                        },
+                        "optimeDate" : ISODate("2024-02-18T13:41:27Z"),
+                        "optimeDurableDate" : ISODate("2024-02-18T13:41:27Z"),
+                        "lastHeartbeat" : ISODate("2024-02-18T13:41:35.405Z"),
+                        "lastHeartbeatRecv" : ISODate("2024-02-18T13:41:36.412Z"),
+                        "pingMs" : NumberLong(0),
+                        "lastHeartbeatMessage" : "",
+                        "syncingTo" : "192.168.191.133:27017",
+                        "syncSourceHost" : "192.168.191.133:27017",
+                        "syncSourceId" : 0,
+                        "infoMessage" : "",
+                        "configVersion" : 3
+                },
+                {
+                        "_id" : 2,
+                        "name" : "192.168.191.133:27019",
+                        "health" : 1,
+                        "state" : 7,
+                        "stateStr" : "ARBITER",
+                        "uptime" : 149,
+                        "lastHeartbeat" : ISODate("2024-02-18T13:41:35.405Z"),
+                        "lastHeartbeatRecv" : ISODate("2024-02-18T13:41:35.408Z"),
+                        "pingMs" : NumberLong(0),
+                        "lastHeartbeatMessage" : "",
+                        "syncingTo" : "",
+                        "syncSourceHost" : "",
+                        "syncSourceId" : -1,
+                        "infoMessage" : "",
+                        "configVersion" : 3
+                }
+        ],
+        "ok" : 1,
+        "operationTime" : Timestamp(1708263687, 1),
+        "$clusterTime" : {
+                "clusterTime" : Timestamp(1708263687, 1),
+                "signature" : {
+                        "hash" : BinData(0,"AAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+                        "keyId" : NumberLong(0)
+                }
+        }
+}
+```
+
+#### 副本集的操作
+試著在主節點(27017)新增資料連接客戶端
+```shell=
+// 本機和27017、可省略host / port需告
+[root@bobohost ~]# /usr/local/mongodb/bin/mongo
+myrs:PRIMARY> use articledb
+switched to db articledb
+myrs:PRIMARY> db
+articledb
+myrs:PRIMARY> db.comment.insert({"articleid":"100000","content":"今天天氣真好，陽光明媚","userid":"1001","nickname":"Rose","createdatetime":new Date()})
+WriteResult({ "nInserted" : 1 })
+myrs:PRIMARY> db.comment.find()
+{ "_id" : ObjectId("5d4d2ae3068138b4570f53bf"), "articleid" : "100000","content" : "今天天氣真好，陽光明媚", "userid" : "1001", "nickname" : "Rose","createdatetime" : ISODate("2019-08-09T08:12:19.427Z") }
+```
+接著使用從節點(27018)連接查看
+```shell=
+[root@bobohost ~]# /usr/local/mongodb/bin/mongo --port=27018
+myrs:SECONDARY> show dbs
+2024-02-18T06:05:03.593-0800 E QUERY    [js] Error: listDatabases failed:{
+        "operationTime" : Timestamp(1708265097, 1),
+        "ok" : 0,
+        "errmsg" : "not master and slaveOk=false",
+        "code" : 13435,
+        "codeName" : "NotMasterNoSlaveOk",
+        "$clusterTime" : {
+                "clusterTime" : Timestamp(1708265097, 1),
+                "signature" : {
+                        "hash" : BinData(0,"AAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+                        "keyId" : NumberLong(0)
+                }
+        }
+} :
+_getErrorWithCode@src/mongo/shell/utils.js:25:13
+Mongo.prototype.getDBs@src/mongo/shell/mongo.js:151:1
+shellHelper.show@src/mongo/shell/utils.js:882:13
+shellHelper@src/mongo/shell/utils.js:766:15
+@(shellhelp2):1:1
+```
+有以上錯誤訊息是因為目前從節點只是一個備份，不是奴隸節點，無法讀取數據，寫當然更不行。
+因為默認情況下，從節點是沒有讀寫權限的，可以增加讀的權限，但需要進行設置。`rs.slaveOk()` 或 `rs.slaveOk(true)`；新版本也升級為`rs.secondaryOk()`。
+
+另外仲裁節點是沒有讀寫權限的，即便使用以上指令也無效。
+
+另外注意的是：如果使用Compass 連接，不管是叢集的哪個節點，都可以做讀寫操作，因為背景Compass 會找出主節點並對其作業。
+
+### 選舉原則
+主節點選舉的觸發條件：
+1. 主節點故障
+2. 主節點網絡不可達（默認心跳訊息為10秒）
+3. 人工幹預（rs.stepDown(600)）
+一旦觸發選舉，就要根據一定規則來選主節點。
+
+選舉規則是根據票數來決定誰獲勝：
+* 票數最高，且獲得了"大多數"成員的投票支持的節點獲勝。假設集內投票成員數量為N，則大多數為 N/2 + 1。例如：3個投票成員，則大多數的值是2。當集內存活成員數量不足大多數時，將無法選舉出Primary，複製集將無法提供寫服務，處於只讀狀態。
+* 若票數相同，且都獲得了"大多數"成員的投票支持的，資料新的節點獲勝。資料的新舊是通過操作日誌oplog 來對比的。
+
+在獲得票數的時候，優先級（priority）參數影響重大。
+可以通過設置優先級（priority）來設置額外票數。優先級即權重，取值為0-1000，相當於可額外增加0-1000的票數，優先級的值越大，就越可能獲得多數成員的投票（votes）數。指定較高的值可使成員更有資格成為主要成員，更低的值可使成員更不符合條件。而默認情況下，優先級的值是1。
+
+以下是變更優先集的範例(連接近mongoDB 後操作)
+1. 先將配置導入cfg變量`myrs:SECONDARY> cfg=rs.conf()`
+2. 然後修改值（ID號默認從0開始）`myrs:SECONDARY> cfg.members[1].priority=2`
+3. 重新加載配置`myrs:SECONDARY> rs.reconfig(cfg)`
+
+為了避免選舉過程中出現平局的情況，建議複製集中的節點數量為奇數。如果只有兩個節點，一個是主節點，另一個是從節點，那麼添加一個仲裁節點可以使節點數量變為奇數，從而避免平局的發生。
+
+服務降級：如果主節點以外的大多數節點故障，會讓複製集無法提供寫服務，處於只讀狀態。
