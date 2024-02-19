@@ -359,8 +359,8 @@ MongoDB 的replicate 有兩種類型及三種腳色
 2. 副本成員（Replicate）：從主節點通過複製操作以維護相同的資料集，即備份資料，不可寫操作，但可以讀操作（但需要配置）。是默認的一種從節點類型。
 3. 仲裁者（Arbiter）：不保留任何資料的副本，只具有投票選舉作用。當然也可以將仲裁服務器維護為副本集的一部分，即副本成員同時也可以是仲裁者。也是一種從節點類型。
 
-### 架構實作
-接下來操作一主一從一仲裁的架構(以port 號區分)，叢集名稱取作myrs
+### 基本集群架構實作
+接下來操作一主一從一仲裁的架構(以port 號區分)，複製集名稱取作myrs
 1. 建立資料夾
 ```shell=
 mkdir -p /mongodb/replica_sets/myrs_27017/log \ &
@@ -611,11 +611,11 @@ replication:
         }
 }
 ```
-或是`rs.status()` 查看叢集狀態。
+或是`rs.status()` 查看複製集狀態。
 ```shell=
 > rs.status()
 {
-        "set" : "myrs", // 叢集名稱
+        "set" : "myrs", // 複製集名稱
         "date" : ISODate("2024-02-18T13:41:36.819Z"),
         "myState" : 1, // 1 即狀態正常
         "term" : NumberLong(1),
@@ -783,7 +783,7 @@ shellHelper@src/mongo/shell/utils.js:766:15
 
 另外仲裁節點是沒有讀寫權限的，即便使用以上指令也無效。
 
-另外注意的是：如果使用Compass 連接，不管是叢集的哪個節點，都可以做讀寫操作，因為背景Compass 會找出主節點並對其作業。
+另外注意的是：如果使用Compass 連接，不管是複製集的哪個節點，都可以做讀寫操作，因為背景Compass 會找出主節點並對其作業。
 
 ### 選舉原則
 主節點選舉的觸發條件：
@@ -807,3 +807,713 @@ shellHelper@src/mongo/shell/utils.js:766:15
 為了避免選舉過程中出現平局的情況，建議複製集中的節點數量為奇數。如果只有兩個節點，一個是主節點，另一個是從節點，那麼添加一個仲裁節點可以使節點數量變為奇數，從而避免平局的發生。
 
 服務降級：如果主節點以外的大多數節點故障，會讓複製集無法提供寫服務，處於只讀狀態。
+
+### 分片集群架構實作
+* 分片（存儲）：每個分片包含分片數據的子集。 每個分片都可以部署為副本集。
+* mongos（路由）：mongos充當查詢路由器，在客戶端應用程序和分片集群之間提供介面。
+* config servers（"調度"的配置）：配置服務器存儲群集的元數據和配置設置。 從MongoDB 3.4開始，必須將配置服務器部署為副本集。
+
+兩個分片節點副本集（3+3）+一個配置節點副本集（3）+兩個路由節點（2），共11個服務節點。
+
+![image](https://hackmd.io/_uploads/ry8FTTgnp.png)
+
+第一套副本集
+1. 準備存放資料和日誌的目錄：
+```shell=
+mkdir -p /mongodb/sharded_cluster/myshardrs01_27018/log \ &
+mkdir -p /mongodb/sharded_cluster/myshardrs01_27018/data/db \ &
+mkdir -p /mongodb/sharded_cluster/myshardrs01_27118/log \ &
+mkdir -p /mongodb/sharded_cluster/myshardrs01_27118/data/db \ &
+mkdir -p /mongodb/sharded_cluster/myshardrs01_27218/log \ &
+mkdir -p /mongodb/sharded_cluster/myshardrs01_27218/data/db
+```
+2. 新建或修改配置文件：
+```shell=
+vim /mongodb/sharded_cluster/myshardrs01_27018/mongod.conf
+```
+3. myshardrs01_27018：
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/sharded_cluster/myshardrs01_27018/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+storage:
+    #mongod實例存儲其資料的目錄。storage.dbPath設置僅適用於mongod。
+    ##The directory where the mongod instance stores its data.Default Value is "/data/db".
+    dbPath: "/mongodb/sharded_cluster/myshardrs01_27018/data/db"
+    journal:
+        #啟用或禁用持久性日誌以確保資料文件保持有效和可恢復。
+        enabled: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+    #指定用於保存mongos或mongod進程的進程ID的文件位置，其中mongos或mongod將寫入其PID
+    pidFilePath: "/mongodb/sharded_cluster/myshardrs01_27018/log/mongod.pid"
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27018
+replication:
+    #副本集的名稱
+    replSetName: myshardrs01
+sharding:
+    #分片角色
+    clusterRole: shardsvr
+```
+sharding.clusterRole：
+
+| Value | Description |
+| -------- | -------- |
+| configsvr | 啟動此實例作為配置伺服器。預設情況下，實例在連接埠 27019 上啟動 |
+| shardsvr | 將此實例作為分片啟動。預設情況下，執行個體會在連接埠 27018 上啟動 |
+4. 新建或修改配置文件：
+```shell=
+vim /mongodb/sharded_cluster/myshardrs01_27118/mongod.conf
+```
+5. myshardrs01_27118：
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/sharded_cluster/myshardrs01_27118/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+storage:
+    #mongod實例存儲其資料的目錄。storage.dbPath設置僅適用於mongod。
+    ##The directory where the mongod instance stores its data.Default Value is "/data/db".
+    dbPath: "/mongodb/sharded_cluster/myshardrs01_27118/data/db"
+    journal:
+        #啟用或禁用持久性日誌以確保資料文件保持有效和可恢復。
+        enabled: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+    #指定用於保存mongos或mongod進程的進程ID的文件位置，其中mongos或mongod將寫入其PID
+    pidFilePath: "/mongodb/sharded_cluster/myshardrs01_27118/log/mongod.pid"
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27118
+replication:
+    #副本集的名稱
+    replSetName: myshardrs01
+sharding:
+    #分片角色
+    clusterRole: shardsvr
+```
+6. 新建或修改配置文件：
+```shell=
+vim /mongodb/sharded_cluster/myshardrs01_27218/mongod.conf
+```
+7. myshardrs01_27218：
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/sharded_cluster/myshardrs01_27218/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+storage:
+    #mongod實例存儲其資料的目錄。storage.dbPath設置僅適用於mongod。
+    ##The directory where the mongod instance stores its data.Default Value is "/data/db".
+    dbPath: "/mongodb/sharded_cluster/myshardrs01_27218/data/db"
+    journal:
+        #啟用或禁用持久性日誌以確保資料文件保持有效和可恢復。
+        enabled: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+    #指定用於保存mongos或mongod進程的進程ID的文件位置，其中mongos或mongod將寫入其PID
+    pidFilePath: "/mongodb/sharded_cluster/myshardrs01_27218/log/mongod.pid"
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27218
+replication:
+    #副本集的名稱
+    replSetName: myshardrs01
+sharding:
+    #分片角色
+    clusterRole: shardsvr
+```
+8. 啟動第一套副本集：
+```shell=
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myshardrs01_27018/mongod.conf 
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myshardrs01_27118/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myshardrs01_27218/mongod.conf
+```
+9. 初始化副本集和創建主節點：
+```shell=
+/usr/local/mongodb/bin/mongo --port 27018
+
+> rs.initiate()
+> rs.add("192.168.191.133:27118")
+> rs.addArb("192.168.191.133:27218")
+```
+第二套副本集
+1. 準備存放資料和日誌的目錄：
+```shell=
+mkdir -p /mongodb/sharded_cluster/myshardrs02_27318/log \ &
+mkdir -p /mongodb/sharded_cluster/myshardrs02_27318/data/db \ &
+mkdir -p /mongodb/sharded_cluster/myshardrs02_27418/log \ &
+mkdir -p /mongodb/sharded_cluster/myshardrs02_27418/data/db \ &
+mkdir -p /mongodb/sharded_cluster/myshardrs02_27518/log \ &
+mkdir -p /mongodb/sharded_cluster/myshardrs02_27518/data/db
+```
+2. 新建或修改配置文件：
+```shell=
+vim /mongodb/sharded_cluster/myshardrs02_27318/mongod.conf
+```
+3. myshardrs02_27318：
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/sharded_cluster/myshardrs02_27318/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+storage:
+    #mongod實例存儲其資料的目錄。storage.dbPath設置僅適用於mongod。
+    ##The directory where the mongod instance stores its data.Default Value is "/data/db".
+    dbPath: "/mongodb/sharded_cluster/myshardrs02_27318/data/db"
+    journal:
+        #啟用或禁用持久性日誌以確保資料文件保持有效和可恢復。
+        enabled: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+    #指定用於保存mongos或mongod進程的進程ID的文件位置，其中mongos或mongod將寫入其PID
+    pidFilePath: "/mongodb/sharded_cluster/myshardrs02_27318/log/mongod.pid"
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27318
+replication:
+    #副本集的名稱
+    replSetName: myshardrs02
+sharding:
+    #分片角色
+    clusterRole: shardsvr
+```
+4. 新建或修改配置文件：
+```shell=
+vim /mongodb/sharded_cluster/myshardrs02_27418/mongod.conf
+```
+5. myshardrs02_27418：
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/sharded_cluster/myshardrs02_27418/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+storage:
+    #mongod實例存儲其資料的目錄。storage.dbPath設置僅適用於mongod。
+    ##The directory where the mongod instance stores its data.Default Value is "/data/db".
+    dbPath: "/mongodb/sharded_cluster/myshardrs02_27418/data/db"
+    journal:
+        #啟用或禁用持久性日誌以確保資料文件保持有效和可恢復。
+        enabled: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+    #指定用於保存mongos或mongod進程的進程ID的文件位置，其中mongos或mongod將寫入其PID
+    pidFilePath: "/mongodb/sharded_cluster/myshardrs02_27418/log/mongod.pid"
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27418
+replication:
+    #副本集的名稱
+    replSetName: myshardrs02
+sharding:
+    #分片角色
+    clusterRole: shardsvr
+```
+6. 新建或修改配置文件：
+```shell=
+vim /mongodb/sharded_cluster/myshardrs02_27518/mongod.conf
+```
+7. myshardrs02_27518：
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/sharded_cluster/myshardrs02_27518/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+storage:
+    #mongod實例存儲其資料的目錄。storage.dbPath設置僅適用於mongod。
+    ##The directory where the mongod instance stores its data.Default Value is "/data/db".
+    dbPath: "/mongodb/sharded_cluster/myshardrs02_27518/data/db"
+    journal:
+        #啟用或禁用持久性日誌以確保資料文件保持有效和可恢復。
+        enabled: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+    #指定用於保存mongos或mongod進程的進程ID的文件位置，其中mongos或mongod將寫入其PID
+    pidFilePath: "/mongodb/sharded_cluster/myshardrs02_27518/log/mongod.pid"
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27518
+replication:
+    #副本集的名稱
+    replSetName: myshardrs02
+sharding:
+    #分片角色
+    clusterRole: shardsvr
+```
+8. 啟動第二套副本集：
+```shell=
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myshardrs02_27318/mongod.conf 
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myshardrs02_27418/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myshardrs02_27518/mongod.conf
+```
+9. 初始化副本集和創建主節點：
+```shell=
+/usr/local/mongodb/bin/mongo --port 27318
+
+> rs.initiate()
+> rs.add("192.168.191.133:27418")
+> rs.addArb("192.168.191.133:27518")
+```
+配置節點副本集
+1. 準備存放資料和日誌的目錄：
+```shell=
+mkdir -p /mongodb/sharded_cluster/myconfigrs_27019/log \ &
+mkdir -p /mongodb/sharded_cluster/myconfigrs_27019/data/db \ &
+mkdir -p /mongodb/sharded_cluster/myconfigrs_27119/log \ &
+mkdir -p /mongodb/sharded_cluster/myconfigrs_27119/data/db \ &
+mkdir -p /mongodb/sharded_cluster/myconfigrs_27219/log \ &
+mkdir -p /mongodb/sharded_cluster/myconfigrs_27219/data/db
+```
+2. 新建或修改配置文件：
+```shell=
+vim /mongodb/sharded_cluster/myconfigrs_27019/mongod.conf
+```
+3. myconfigrs_27019：
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/sharded_cluster/myconfigrs_27019/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+storage:
+    #mongod實例存儲其資料的目錄。storage.dbPath設置僅適用於mongod。
+    ##The directory where the mongod instance stores its data.Default Value is "/data/db".
+    dbPath: "/mongodb/sharded_cluster/myconfigrs_27019/data/db"
+    journal:
+        #啟用或禁用持久性日誌以確保資料文件保持有效和可恢復。
+        enabled: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+    #指定用於保存mongos或mongod進程的進程ID的文件位置，其中mongos或mongod將寫入其PID
+    pidFilePath: "/mongodb/sharded_cluster/myconfigrs_27019/log/mongod.pid"
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27019
+replication:
+    #副本集的名稱
+    replSetName: myconfigrs
+sharding:
+    #分片角色
+    clusterRole: configsvr
+```
+4. 新建或修改配置文件：
+```shell=
+vim /mongodb/sharded_cluster/myconfigrs_27119/mongod.conf
+```
+5. myconfigrs_27119：
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/sharded_cluster/myconfigrs_27119/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+storage:
+    #mongod實例存儲其資料的目錄。storage.dbPath設置僅適用於mongod。
+    ##The directory where the mongod instance stores its data.Default Value is "/data/db".
+    dbPath: "/mongodb/sharded_cluster/myconfigrs_27119/data/db"
+    journal:
+        #啟用或禁用持久性日誌以確保資料文件保持有效和可恢復。
+        enabled: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+    #指定用於保存mongos或mongod進程的進程ID的文件位置，其中mongos或mongod將寫入其PID
+    pidFilePath: "/mongodb/sharded_cluster/myconfigrs_27119/log/mongod.pid"
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27119
+replication:
+    #副本集的名稱
+    replSetName: myconfigrs
+sharding:
+    #分片角色
+    clusterRole: configsvr
+```
+6. 新建或修改配置文件：
+```shell=
+vim /mongodb/sharded_cluster/myconfigrs_27219/mongod.conf
+```
+7. myconfigrs_27219：
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/sharded_cluster/myconfigrs_27219/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+storage:
+    #mongod實例存儲其資料的目錄。storage.dbPath設置僅適用於mongod。
+    ##The directory where the mongod instance stores its data.Default Value is "/data/db".
+    dbPath: "/mongodb/sharded_cluster/myconfigrs_27219/data/db"
+    journal:
+        #啟用或禁用持久性日誌以確保資料文件保持有效和可恢復。
+        enabled: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+    #指定用於保存mongos或mongod進程的進程ID的文件位置，其中mongos或mongod將寫入其PID
+    pidFilePath: "/mongodb/sharded_cluster/myconfigrs_27219/log/mongod.pid"
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27219
+replication:
+    #副本集的名稱
+    replSetName: myconfigrs
+sharding:
+    #分片角色
+    clusterRole: configsvr
+```
+8. 啟動配置節點副本集：
+```shell=
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myconfigrs_27019/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myconfigrs_27119/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myconfigrs_27219/mongod.conf
+```
+9. 初始化副本集和創建主節點：
+```shell=
+/usr/local/mongodb/bin/mongo --port 27019
+
+> rs.initiate()
+> rs.add("192.168.191.133:27119")
+> rs.add("192.168.191.133:27219")
+```
+路由節點
+1. 準備存放資料和日誌的目錄：
+```shell=
+mkdir -p /mongodb/sharded_cluster/mymongos_27017/log
+mkdir -p /mongodb/sharded_cluster/mymongos_27117/log
+```
+2. 新建或修改配置文件：
+```shell=
+vim /mongodb/sharded_cluster/mymongos_27017/mongos.conf
+```
+3. mongos.conf：
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/sharded_cluster/mymongos_27017/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+    #指定用於保存mongos或mongod進程的進程ID的文件位置，其中mongos或mongod將寫入其PID
+    pidFilePath: "/mongodb/sharded_cluster/mymongos_27017/log/mongod.pid"
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27017
+sharding:
+    #指定配置節點副本集
+    configDB: myconfigrs/192.168.191.133:27019,192.168.191.133:27119,192.168.191.133:27219
+```
+4. 新建或修改配置文件：
+```shell=
+vim /mongodb/sharded_cluster/mymongos_27117/mongos.conf
+```
+5. mongos.conf：
+```shell=
+systemLog:
+    #MongoDB發送所有日誌輸出的目標指定為文件
+    # #The path of the log file to which mongod or mongos should send all diagnostic logging information
+    destination: file
+    #mongod或mongos應向其發送所有診斷日誌記錄訊息的日誌文件的路徑
+    path: "/mongodb/sharded_cluster/mymongos_27117/log/mongod.log"
+    #當mongos或mongod實例重新啟動時，mongos或mongod會將新條目附加到現有日誌文件的末尾。
+    logAppend: true
+processManagement:
+    #啟用在後台運行mongos或mongod進程的守護進程模式。
+    fork: true
+    #指定用於保存mongos或mongod進程的進程ID的文件位置，其中mongos或mongod將寫入其PID
+    pidFilePath: "/mongodb/sharded_cluster/mymongos_27117/log/mongod.pid"
+net:
+    #服務實例綁定的IP，默認是localhost
+    bindIp: localhost,192.168.191.133
+    #bindIp，後接虛擬機的IP
+    #綁定的端口，默認是27017
+    port: 27117
+sharding:
+    #指定配置節點副本集
+    configDB: myconfigrs/192.168.191.133:27019,192.168.191.133:27119,192.168.191.133:27219
+```
+6. 啟動路由節點：
+```shell=
+/usr/local/mongodb/bin/mongos -f /mongodb/sharded_cluster/mymongos_27017/mongos.conf
+/usr/local/mongodb/bin/mongos -f /mongodb/sharded_cluster/mymongos_27117/mongos.conf
+```
+7. 添加分片：
+```shell=
+/usr/local/mongodb/bin/mongo --port 27017
+
+> sh.addShard("myshardrs01/192.168.191.133:27018,192.168.191.133:27118,192.168.191.133:27218")
+> sh.addShard("myshardrs02/192.168.191.133:27318,192.168.191.133:27418,192.168.191.133:27518")
+```
+
+如果添加分片失敗，需要先手動移除分片，檢查添加分片的正確性後，再次添加分片(而如果只剩下最後一個shard，是無法刪除的)。
+移除分片參考：
+```shell=
+use admin
+db.runCommand( { removeShard: "myshardrs02" } )
+```
+8. 開啟分片功能(庫)：sh.enableSharding("庫名")
+```shell=
+> sh.enableSharding("articledb")
+```
+
+9. 開啟分片功能(集合)：sh.shardCollection(namespace, key, unique)
+```shell=
+> sh.shardCollection("articledb.comment",{"nickname":"hashed"})
+> sh.shardCollection("articledb.author",{"age":1})
+```
+| Parameter | Type | Description |
+| -------- | -------- | -------- |
+| namespace | string | 要（分片）共享的目標集合的命名空間：<database>.<collection> |
+| key | document | 用作分片鍵的索引規範文檔。shard 鍵決定MongoDB 如何在shard 之間分發文檔。除非集合為空，否則索引必須在shard collection 命令之前存在 |
+| unique | boolean | 當值為true 時，片鍵字段上會限制為確保是唯一索引。哈希策略片鍵不支持唯一索引。默認是false |
+
+在使用分片時，需要指定一個或多個分片鍵（Shard Key），這是一個用於將數據劃分到不同分片的字段。
+
+分片規則：
+* 哈希分片鍵（Hash-based Shard Key）： 使用數據的哈希值來確定數據所在的分片。可以有效地均勻分散數據，但在查詢時可能需要在所有分片上進行查詢。
+* 區間分片鍵（Range-based Shard Key）： 基於數據的區間，例如日期、數字或字母等。適用於按照一定區間劃分數據的應用場景，例如按照日期分片。
+
+注意的是：
+* 一個集合只能指定一個片鍵，否則報錯。
+* 一旦對一個集合分片，分片鍵和分片值就不可改變。 如：不能給集合選擇不同的分片鍵、不能更新分片鍵的值。
+
+查看分片狀況
+```shell=
+mongos> sh.status()
+--- Sharding Status ---
+  sharding version: {
+        "_id" : 1,
+        "minCompatibleVersion" : 5,
+        "currentVersion" : 6,
+        "clusterId" : ObjectId("65d357a57d3d7a73dce4bc61")
+  }
+  shards:
+        {  "_id" : "myshardrs01",  "host" : "myshardrs01/192.168.191.133:27018,192.168.191.133:27118",  "state" : 1 }
+        {  "_id" : "myshardrs02",  "host" : "myshardrs02/192.168.191.133:27318,192.168.191.133:27418",  "state" : 1 }
+  active mongoses:
+        "4.0.28" : 1
+  autosplit:
+        Currently enabled: yes
+  balancer:
+        Currently enabled:  yes
+        Currently running:  no
+        Failed balancer rounds in last 5 attempts:  0
+        Migration Results for the last 24 hours:
+                512 : Success
+  databases:
+        {  "_id" : "articledb",  "primary" : "myshardrs02",  "partitioned" : true,  "version" : {  "uuid" : UUID("455baba2-3df0-43a3-8231-0798fec76c28"),  "lastMod" : 1 } }
+                articledb.author
+                        shard key: { "age" : 1 }
+                        unique: false
+                        balancing: true
+                        chunks:
+                                myshardrs02     1
+                        { "age" : { "$minKey" : 1 } } -->> { "age" : { "$maxKey" : 1 } } on : myshardrs02 Timestamp(1, 0)
+                articledb.comment
+                        shard key: { "nickname" : "hashed" }
+                        unique: false
+                        balancing: true
+                        chunks:
+                                myshardrs01     2
+                                myshardrs02     2
+                        { "nickname" : { "$minKey" : 1 } } -->> { "nickname" : NumberLong("-4611686018427387902") } on : myshardrs01 Timestamp(1, 0)
+                        { "nickname" : NumberLong("-4611686018427387902") } -->> { "nickname" : NumberLong(0) } on : myshardrs01 Timestamp(1, 1)
+                        { "nickname" : NumberLong(0) } -->> { "nickname" : NumberLong("4611686018427387902") } on : myshardrs02 Timestamp(1, 2)
+                        { "nickname" : NumberLong("4611686018427387902") } -->> { "nickname" : { "$maxKey" : 1 } } on : myshardrs02 Timestamp(1, 3)
+        {  "_id" : "config",  "primary" : "config",  "partitioned" : true }
+                config.system.sessions
+                        shard key: { "_id" : 1 }
+                        unique: false
+                        balancing: true
+                        chunks:
+                                myshardrs01     512
+                                myshardrs02     512
+                        too many chunks to print, use verbose if you want to force print
+```
+
+測試：
+在路由節點新增數據並透過各分片查看
+1. 哈希規則
+```shell=
+mongos> use articledb
+mongos> for(var i=1;i<=1000;i++){db.comment.insert({_id:i+"",nickname:"BoBo"+i})}
+mongos> db.comment.count()
+1000
+// 接著也在其他分片查看，便可得到結果
+```
+2. 範圍規則
+```shell=
+mongos> use articledb
+mongos> for(var i=1;i<=200;i++){db.author.save({"name":"BoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBoBo"+i,"age":NumberInt(i*10000)})}
+mongos> db.author.count()
+200
+// 接著也在其他分片查看，便可得到結果
+```
+
+## 安全認證
+MongoDB 使用的是基於角色的訪問控制(Role-Based Access Control, RBAC)來管理用戶對實例的訪問。默認情況下，實例啟動運行時不啟用，可以在啟動時添加選項–auth 或指定啟動配置文件中添加選項auth=true。
+* 角色：通過角色對用戶授予相應資料庫資源的操作權限，角色的權限可以顯式指定，也可以通過繼承其他角色的權限，或者兩者都存在。
+* 權限：由指定的資料庫資源(resource)以及允許在指定資源上進行的操作(action)組成。
+* 資源(resource)包括：資料庫、集合、部分集合和集群。
+* 操作(action)包括：對資源進行的增、刪、改、查(CRUD)操作。
+
+1. 在角色定義時可以包含一個或多個已存在的角色。
+2. 新創建的角色會繼承包含的角色所有的權限。
+3. 在同一個資料庫中，新創建角色可以繼承其他角色的權限。
+4. 在admin 資料庫中創建的角色可以繼承在其它任意資料庫中角色的權限。
+```shell=
+// 查詢所有角色權限(僅用戶自定義角色)
+> db.runCommand({ rolesInfo: 1 })
+// 查詢所有角色權限(包含內置角色)
+> db.runCommand({ rolesInfo: 1, showBuiltinRoles: true })
+// 查詢當前資料庫中的某角色的權限
+> db.runCommand({ rolesInfo: "<rolename>" })
+// 查詢其它資料庫中指定的角色權限
+> db.runCommand({ rolesInfo: { role: "<rolename>", db: "<database>" } }
+// 查詢多個角色權限
+> db.runCommand(
+	{
+        rolesInfo: [
+            "<rolename>",
+            { role: "<rolename>", db: "<database>" },
+            ...
+        ]
+    }
+)
+```
+
+| 角色 | 權限描述 |
+| -------- | -------- |
+| read | 可以讀取指定數據庫中任何數據 |
+| readWrite | 可以讀寫指定數據庫中任何數據，包括創建、重命名、刪除集合 |
+| readAnyDatabase | 可以讀取所有數據庫中任何數據(除了數據庫config 和local 之外) |
+| readWriteAnyDatabase | 可以讀寫所有數據庫中任何數據(除了數據庫config 和local 之外) |
+| userAdminAnyDatabase | 可以在指定數據庫創建和修改用戶(除了數據庫confifig 和local 之外) |
+| dbAdminAnyDatabase | 可以讀取任何數據庫以及對數據庫進行清理、修改、壓縮、獲取統計信息、執行檢查等操作(除了數據庫|confifig 和local 之外) |
+| dbAdmin | 可以讀取指定數據庫以及對數據庫進行清理、修改、壓縮、獲取統計信息、執行檢查等操作 |
+| userAdmin | 可以在指定數據庫創建和修改用戶 |
+| clusterAdmin | 可以對整個集群或數據庫系統進行管理操作 |
+| backup	| 備份MongoDB 數據最小的權限 |
+| restore | 從備份文件中還原恢復MongoDB 數據(除了system.profile 集合)的權限 |
+| root | 超級帳號，超級權限 |
+
+### 單機操作
+使用最初建立的單機實例
+1. 啟動 `/usr/local/mongodb/bin/mongod -f /mongodb/single/mongod.conf`
+2. 登錄並建立腳色
+```shell=
+/usr/local/mongodb/bin/mongo
+
+//切換到admin庫
+> use admin
+//創建系統超級用戶 myroot,設置密碼123456，設置角色root
+//> db.createUser({user:"myroot",pwd:"123456",roles:[ { "role" : "root", "db" : "admin" } ]})
+//或
+> db.createUser({user:"myroot",pwd:"123456",roles:["root"]})
+//創建專門用來管理admin庫的賬號myadmin，只用來作為用戶權限的管理
+> db.createUser({user:"myadmin",pwd:"123456",roles:[{role:"userAdminAnyDatabase",db:"admin"}]})
+//查看已經創建了的用戶的情況：
+> db.system.users.find()
+//刪除用戶
+> db.dropUser("myadmin")
+//修改密碼
+> db.changeUserPassword("myroot", "123456")
+
+//切換到admin
+> use admin
+//密碼輸錯
+> db.auth("myroot","12345")
+Error: Authentication failed.
+0
+//密碼正確
+> db.auth("myroot","123456")
+1
+```
+創建普通用戶：可以在沒有開啟認證的時候添加，也可以在開啟認證之後添加，但開啟認證之後，必須使用有操作admin 庫的用戶登錄認證後才能操作。底層都是將用戶信息保存在了admin 庫的集合system.users 中。
+```shell=
+//創建(切換)將來要操作的庫articledb,
+> use articledb
+//創建用戶，擁有articledb 庫的讀寫權限readWrite，密碼是123456
+> db.createUser({user: "bobo", pwd: "123456", roles: [{ role: "readWrite", db: "articledb" }]})
+//測試是否可用
+> db.auth("bobo","123456")
+1
+```
