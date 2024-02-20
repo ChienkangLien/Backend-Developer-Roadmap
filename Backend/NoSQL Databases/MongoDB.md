@@ -815,7 +815,7 @@ shellHelper@src/mongo/shell/utils.js:766:15
 
 兩個分片節點副本集（3+3）+一個配置節點副本集（3）+兩個路由節點（2），共11個服務節點。
 
-![image](https://hackmd.io/_uploads/ry8FTTgnp.png)
+![image](../images/mongoHA.png)
 
 第一套副本集
 1. 準備存放資料和日誌的目錄：
@@ -1429,7 +1429,7 @@ mongos> db.author.count()
 ```
 
 ## 安全認證
-MongoDB 使用的是基於角色的訪問控制(Role-Based Access Control, RBAC)來管理用戶對實例的訪問。默認情況下，實例啟動運行時不啟用，可以在啟動時添加選項–auth 或指定啟動配置文件中添加選項auth=true。
+MongoDB 使用的是基於角色的訪問控制(Role-Based Access Control, RBAC)來管理用戶對實例的訪問。默認情況下，實例啟動運行時不啟用，可以在啟動時添加選項--auth 或指定啟動配置文件中添加選項開啟。
 * 角色：通過角色對用戶授予相應資料庫資源的操作權限，角色的權限可以顯式指定，也可以通過繼承其他角色的權限，或者兩者都存在。
 * 權限：由指定的資料庫資源(resource)以及允許在指定資源上進行的操作(action)組成。
 * 資源(resource)包括：資料庫、集合、部分集合和集群。
@@ -1516,4 +1516,266 @@ Error: Authentication failed.
 //測試是否可用
 > db.auth("bobo","123456")
 1
+```
+3. 退出後關閉MongoDB(kill) 再重啟：
+```shell=
+// 1.在啟動時指定參數
+/usr/local/mongodb/bin/mongod -f /mongodb/single/mongod.conf --auth
+
+// 2.配置文件方式
+vim /mongodb/single/mongod.conf
+
+// 加上
+security:
+    #開啟授權認證
+    authorization: enabled
+    
+/usr/local/mongodb/bin/mongod -f /mongodb/single/mongod.conf
+```
+4. 驗證是否有效
+```shell=
+> use admin
+> db.system.users.find()
+// 會是Error
+
+> db.auth("myroot","123456")
+// 使用超級帳號，即可正常操作
+
+// 退出重新連接
+> use articledb
+> db.comment.find()
+// 會是Error
+
+> db.auth("bobo","123456")
+// 使用先前建立的普通帳號，即可正常操作
+```
+
+### 基本集群操作
+使用先前建立的架構(第一套副本集27017 / 27018 / 27019)
+
+對副本集執行訪問控制的配置：
+各個節點成員之間使用內部身份驗證，可以使用密鑰文件或x.509證書。密鑰文件比較簡單，本文使用密鑰文件，官方推薦如果是測試環境可以使用密鑰文件，但是正式環境，官方推薦x.509證書。
+原理就是，集群中每一個實例彼此連接的時候都檢驗彼此使用的證書的內容是否相同。只有證書相同的實例彼此才可以訪問。
+
+1. 啟動副本集
+```shell=
+/usr/local/mongodb/bin/mongod -f /mongodb/replica_sets/myrs_27017/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/replica_sets/myrs_27018/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/replica_sets/myrs_27019/mongod.conf
+```
+2. 登錄並建立腳色
+```shell=
+/usr/local/mongodb/bin/mongo
+
+> use admin
+> db.createUser({user:"myroot",pwd:"123456",roles:["root"]})
+```
+3. 創建副本集認證的文件
+```shell=
+// 先退出MongoDB
+
+cd ~
+openssl rand -base64 90 -out ./mongo.keyfile
+// 對該文件控制訪問權，過於開放會導致啟動失敗
+chmod 400 ./mongo.keyfile
+cp mongo.keyfile /mongodb/replica_sets/myrs_27017
+cp mongo.keyfile /mongodb/replica_sets/myrs_27018
+cp mongo.keyfile /mongodb/replica_sets/myrs_27019
+```
+4. 修改配置文件
+```shell=
+vim /mongodb/replica_sets/myrs_27017/mongod.conf
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/replica_sets/myrs_27017/mongo.keyfile
+    #開啟認證方式運行
+    authorization: enabled
+    
+vim /mongodb/replica_sets/myrs_27018/mongod.conf
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/replica_sets/myrs_27018/mongo.keyfile
+    #開啟認證方式運行
+    authorization: enabled
+    
+vim /mongodb/replica_sets/myrs_27019/mongod.conf
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/replica_sets/myrs_27019/mongo.keyfile
+    #開啟認證方式運行
+    authorization: enabled
+```
+5. 重新啟動副本集(先kill)
+```shell=
+/usr/local/mongodb/bin/mongod -f /mongodb/replica_sets/myrs_27017/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/replica_sets/myrs_27018/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/replica_sets/myrs_27019/mongod.conf
+```
+6. 在主節點新增普通帳號
+```shell=
+/usr/local/mongodb/bin/mongo
+
+> use admin
+#管理員賬號認證
+> db.auth("myroot","123456")
+#切換到要認證的庫
+> use articledb
+#添加普通用戶
+> db.createUser({user: "bobo", pwd: "123456", roles: ["readWrite"]})
+```
+
+### 分片集群操作
+使用先前建立的架構：兩個分片節點副本集（3+3）+一個配置節點副本集（3）+兩個路由節點（2）
+
+1. 創建副本集認證的文件
+```shell=
+cd ~
+openssl rand -base64 90 -out ./mongo.keyfile
+// 對該文件控制訪問權，過於開放會導致啟動失敗
+chmod 400 ./mongo.keyfile
+cp mongo.keyfile /mongodb/sharded_cluster/myshardrs01_27018
+cp mongo.keyfile /mongodb/sharded_cluster/myshardrs01_27118
+cp mongo.keyfile /mongodb/sharded_cluster/myshardrs01_27218
+cp mongo.keyfile /mongodb/sharded_cluster/myshardrs02_27318
+cp mongo.keyfile /mongodb/sharded_cluster/myshardrs02_27418
+cp mongo.keyfile /mongodb/sharded_cluster/myshardrs02_27518
+cp mongo.keyfile /mongodb/sharded_cluster/myconfigrs_27019
+cp mongo.keyfile /mongodb/sharded_cluster/myconfigrs_27119
+cp mongo.keyfile /mongodb/sharded_cluster/myconfigrs_27219
+cp mongo.keyfile /mongodb/sharded_cluster/mymongos_27017
+cp mongo.keyfile /mongodb/sharded_cluster/mymongos_27117
+```
+2. 修改配置文件
+```shell=
+vim /mongodb/sharded_cluster/myshardrs01_27018/mongod.conf
+
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/sharded_cluster/myshardrs01_27018/mongo.keyfile
+    #開啟認證方式運行
+    authorization: enabled
+    
+vim /mongodb/sharded_cluster/myshardrs01_27118/mongod.conf
+
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/sharded_cluster/myshardrs01_27118/mongo.keyfile
+    #開啟認證方式運行
+    authorization: enabled
+    
+vim /mongodb/sharded_cluster/myshardrs01_27218/mongod.conf
+
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/sharded_cluster/myshardrs01_27218/mongo.keyfile
+    #開啟認證方式運行
+    authorization: enabled
+    
+vim /mongodb/sharded_cluster/myshardrs02_27318/mongod.conf
+
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/sharded_cluster/myshardrs02_27318/mongo.keyfile
+    #開啟認證方式運行
+    authorization: enabled
+    
+vim /mongodb/sharded_cluster/myshardrs02_27418/mongod.conf
+
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/sharded_cluster/myshardrs02_27418/mongo.keyfile
+    #開啟認證方式運行
+    authorization: enabled
+    
+vim /mongodb/sharded_cluster/myshardrs02_27518/mongod.conf
+
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/sharded_cluster/myshardrs02_27518/mongo.keyfile
+    #開啟認證方式運行
+    authorization: enabled
+    
+vim /mongodb/sharded_cluster/myconfigrs_27019/mongod.conf
+
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/sharded_cluster/myconfigrs_27019/mongo.keyfile
+    #開啟認證方式運行
+    authorization: enabled
+    
+vim /mongodb/sharded_cluster/myconfigrs_27119/mongod.conf
+
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/sharded_cluster/myconfigrs_27119/mongo.keyfile
+    #開啟認證方式運行
+    authorization: enabled
+    
+vim /mongodb/sharded_cluster/myconfigrs_27219/mongod.conf
+
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/sharded_cluster/myconfigrs_27219/mongo.keyfile
+    #開啟認證方式運行
+    authorization: enabled
+    
+vim /mongodb/sharded_cluster/mymongos_27017/mongos.conf
+
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/sharded_cluster/mymongos_27017/mongo.keyfile
+    
+vim /mongodb/sharded_cluster/mymongos_27117/mongos.conf
+
+// 加上
+security:
+    #KeyFile鑒權文件
+    keyFile: /mongodb/sharded_cluster/mymongos_27117/mongo.keyfile
+```
+3. 啟動集群
+```shell=
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myconfigrs_27019/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myconfigrs_27119/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myconfigrs_27219/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myshardrs01_27018/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myshardrs01_27118/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myshardrs01_27218/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myshardrs02_27318/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myshardrs02_27418/mongod.conf
+/usr/local/mongodb/bin/mongod -f /mongodb/sharded_cluster/myshardrs02_27518/mongod.conf
+/usr/local/mongodb/bin/mongos -f /mongodb/sharded_cluster/mymongos_27017/mongos.conf
+/usr/local/mongodb/bin/mongos -f /mongodb/sharded_cluster/mymongos_27117/mongos.conf
+```
+4. 創建帳號
+```shell=
+/usr/local/mongodb/bin/mongo
+
+mongos> use admin
+mongos> db.createUser({user:"myroot",pwd:"123456",roles:["root"]})
+mongos> db.auth("myroot","123456")
+mongos> use articledb
+mongos> db.createUser({user: "bobo", pwd: "123456", roles: [{ role: "readWrite", db: "articledb" }]})
+mongos> db.auth("bobo","123456")
+```
+5. 使用普通帳號連接
+```shell=
+// 退出重連
+/usr/local/mongodb/bin/mongo
+
+mongos> use articledb
+mongos> db.auth("bobo","123456")
+mongos> show collections
 ```
