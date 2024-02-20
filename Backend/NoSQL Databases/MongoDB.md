@@ -815,7 +815,7 @@ shellHelper@src/mongo/shell/utils.js:766:15
 
 兩個分片節點副本集（3+3）+一個配置節點副本集（3）+兩個路由節點（2），共11個服務節點。
 
-![image](../images/mongoHA.png)
+![image](images/mongoHA.png)
 
 第一套副本集
 1. 準備存放資料和日誌的目錄：
