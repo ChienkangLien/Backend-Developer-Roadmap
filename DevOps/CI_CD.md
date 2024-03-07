@@ -76,6 +76,7 @@ apt-get install -y maven
 ```
 
 ## Tomcat
+使用獨立Tomcat 運行
 1. 安裝JDK：`sudo yum install java-1.8.0-openjdk-devel -y`
 2. 把Tomcat 壓縮檔上傳到VM 中並解壓：`tar -xzf apache-tomcat-8.5.99.tar.gz`
 3. 創建目錄：`mkdir -p /opt/tomcat`
@@ -101,7 +102,7 @@ apt-get install -y maven
 1. Jenkins 需要依賴JDK：`sudo yum install java-1.8.0-openjdk-devel -y`；因為是使用docker 安裝Jenkins，所以也是在container 中做安裝(若容器自帶則免安裝)
 2. docker pull：`docker pull jenkins/jenkins`
 3. docker run：`docker run -d -p 8080:8080 -p 50000:50000 --name jenkins jenkins/jenkins`
-4. 訪問 http://192.168.191.132:8080/ 即可進一步安裝插件以及配置使用者資訊；這邊先安裝推薦插件以及跳過使用者配置(以admin 登入、默認密碼在`/var/jenkins_home/secrets/initialAdminPassword`)
+4. 訪問 http://192.168.191.132:8080/ 即可進一步安裝插件以及配置使用者資訊；這邊先安裝推薦插件以及跳過使用者配置(以admin 登入、默認密碼在容器中的`/var/jenkins_home/secrets/initialAdminPassword`)
 
 ### 角色權限
 1. 安裝Role-based Authorization Strategy 並在Security/授權 選擇Role-Based Strategy 開啟功能。
@@ -138,3 +139,98 @@ echo "編譯和打包結束"
 4. Containers：Tomcat 8.x Remote 選擇對應版本
 5. Credentials：以先前在Tomcat 新增的devuser/password 作為憑證
 6. Tomcat URL：http://192.168.191.134:8080 輸入對應位址
+
+### 構建Maven 專案
+1. 安裝Maven Integration 插件
+2. 配置步驟與先前FreeStyle 專案一樣，唯一不同是Maven 指令輸入在Goal 及選項中(clean package)、不用敲在Shell 欄位
+
+### 構建Pipeline 專案
+以代碼(Declarative(聲明式)和 Scripted Pipeline(腳本式)語法；基於groovy)的形式實現，有兩種創建方法：可以直接在Jenkins 的UI 中輸入腳本；也可以通過創建一個Jenkinsfile 腳本文件放入代碼庫中。
+
+#### Declarative
+```groovy=
+pipeline {
+    agent any
+
+    stages {
+        stage('pull code') {
+            steps {
+                echo 'pull code'
+            }
+        }
+        stage('build project') {
+            steps {
+                echo 'build project'
+            }
+        }
+        stage('publish project') {
+            steps {
+                echo 'publish project'
+            }
+        }
+    }
+}
+```
+* stages：代表整個流水線的所有執行階段。通常stages 只有1個，包含多個stage。
+* stage：代表流水線中的某個階段，可能出現n個。一般分為拉取代碼，編譯構建，部署等階段。
+* steps：代表一個階段內需要執行的邏輯。steps 裡面是shell 腳本，git 拉取代碼，ssh 遠程發布等任意內容。
+#### Scripted Pipeline
+```groovy=
+node {
+    def mvnHome
+    stage('pull code') {
+        echo 'pull code'
+    }
+    stage('build project') {
+        echo 'build project'
+    }
+    stage('publich project') {
+        echo 'publish project'
+    }
+}
+```
+* Node：節點，一個Node 就是一個Jenkins 節點，Master 或者 Agent 是執行Step 的具體運行環境，後續講到Jenkins 的Master-Slave 架構的時候用到。
+* Stage：階段，一個Pipeline 可以劃分為多個Stage，每個Stage 代表一組操作，比如：Build、Test、Deploy，Stage 是一個邏輯分組的概念。
+* Step：步驟，Step 是最基本的操作單元，可以是打印一句話，也可以是構建一個Docker Image，由各類Jenkins 插件提供，比如命令：sh 'make'，就相當於我們平時shell 終端中執行make 命令一樣。
+
+可以使用當中的Pipeline Syntax/Snippet Generator 工具輔助腳本的生成，例如：
+1. 拉取代碼：Sample Step：checkout: Check out from version control、指定Repository URL 和Branch
+2. 打包程式：Sample Step：Shell Script、Shell Script：mvn clean package
+3. 部屬專案：Sample Step：deploy: Deploy war/ear to a container，指定WAR/EAR files 和Credentials 和Tomcat URL
+
+即可組成以下
+```groovy=
+pipeline {
+    agent any
+
+    stages {
+        stage('pull code') {
+            steps {
+                checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://gitlab.com/chienkang1114/demo.git']])
+            }
+        }
+        stage('build project') {
+            steps {
+                sh 'mvn clean package'
+            }
+        }
+        stage('publish project') {
+            steps {
+                deploy adapters: [tomcat8(credentialsId: '88b48a98-4d97-4807-9e15-1ff9de4accc8', path: '', url: 'http://192.168.191.134:8080')], contextPath: null, war: 'target/*.war'
+            }
+        }
+    }
+}
+```
+
+Configuration/Pipeline/Definition 有兩種維護腳本方式
+* Pipeline script：直接在Jenkins 的UI 中輸入腳本
+* Pipeline script from SCM：創建一個Jenkinsfile 腳本文件放入代碼庫中，選擇Git 並指定Repository URL 和Branch，而Script Path 默認為Jenkinsfile，所以文件要放在根目錄並使用默認的命名
+
+### Build Triggers
+常用的4種構建觸發器：
+1. 遠端觸發建置：驗證 Token 輸入mytoken，訪問JENKINS_URL/job/demo_pipeline/build?token=TOKEN_NAME 即可觸發
+2. 在其他專案建置完成後建置：指定要監控的專案，在該專案建置後觸發
+3. 定期建置：輸入定時表達式構建(字符串從左往右分別為：分 時 日 月 周)
+4. 輪詢SCM：當代碼來源是SCM則可使用，也是輸入定時表達式，接著監測指定的
+5. Build when a change is pushed to GitLab.：由GitLab 發送建構請求(默認Jenkins 即會對push、merge 做響應)，另一方面也要到GitLat 配置Webhooks(也可選擇哪些操作觸發請求)
