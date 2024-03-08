@@ -227,6 +227,9 @@ Configuration/Pipeline/Definition 有兩種維護腳本方式
 * Pipeline script：直接在Jenkins 的UI 中輸入腳本
 * Pipeline script from SCM：創建一個Jenkinsfile 腳本文件放入代碼庫中，選擇Git 並指定Repository URL 和Branch，而Script Path 默認為Jenkinsfile，所以文件要放在根目錄並使用默認的命名
 
+#### 參數構建
+Configuration/參數化建置、可以增加自定義的參數，例如：將以上Jenkinsfile 內容修改`checkout scmGit(branches: [[name: '*/${branch}']], extensions: [], userRemoteConfigs: [[url: 'https://gitlab.com/chienkang1114/demo.git']])`，Jenkins 配置文字參數branch，即可帶參數建置
+
 ### Build Triggers
 常用的4種構建觸發器：
 1. 遠端觸發建置：驗證 Token 輸入mytoken，訪問JENKINS_URL/job/demo_pipeline/build?token=TOKEN_NAME 即可觸發
@@ -234,3 +237,128 @@ Configuration/Pipeline/Definition 有兩種維護腳本方式
 3. 定期建置：輸入定時表達式構建(字符串從左往右分別為：分 時 日 月 周)
 4. 輪詢SCM：當代碼來源是SCM則可使用，也是輸入定時表達式，接著監測指定的
 5. Build when a change is pushed to GitLab.：由GitLab 發送建構請求(默認Jenkins 即會對push、merge 做響應)，另一方面也要到GitLat 配置Webhooks(也可選擇哪些操作觸發請求)
+
+### 郵件配置
+這裡使用Gmail 為範例
+1. 安裝Email Extension Template 插件(獲得更多郵件功能)
+2. 開始System配置 Jenkins 位置/系統管理員郵件地址：可順便依照需求給定信箱
+3. 擴充電子郵件通知 SMTP server：smtp.gmail.com、SMTP Port：465、Credentials：Username with password(需另到Google 申請應用程式密碼)、Use SSL、預設收件人：收件者信箱
+4. 電子郵件通知 SMTP 伺服器：smtp.gmail.com、Use SMTP Authentication：輸入使用者名稱/密碼、使用 SSL、SMTP 連接埠：465
+5. 即可寄測試信，看看電子郵件通知的設定正不正確
+
+使用郵件模板寄信
+1. System配置 擴充電子郵件通知/預設內容類型 設定HTML
+2. 將模板放在GitLab 目標repository 跟目錄下(email.html)
+3. 模板中的參數可以參考 擴充電子郵件通知/內容 Token 參考
+```htmlmixed=
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>${ENV, var="JOB_NAME"}-第${BUILD_NUMBER}次構建日志</title>
+</head>
+
+<body leftmargin="8" marginwidth="0" topmargin="8" marginheight="4"
+      offset="0">
+<table width="95%" cellpadding="0" cellspacing="0"
+       style="font-size: 11pt; font-family: Tahoma, Arial, Helvetica, sans-serif">
+    <tr>
+        <td>(本郵件是程序自動下發的，請勿回覆！)</td>
+    </tr>
+    <tr>
+        <td><h2>
+            <font color="#0000FF">構建結果 - ${BUILD_STATUS}</font>
+        </h2></td>
+    </tr>
+    <tr>
+        <td><br />
+            <b><font color="#0B610B">構建信息</font></b>
+            <hr size="2" width="100%" align="center" /></td>
+    </tr>
+    <tr>
+        <td>
+            <ul>
+                <li>項目名稱&nbsp;：&nbsp;${PROJECT_NAME}</li>
+                <li>構建編號&nbsp;：&nbsp;第${BUILD_NUMBER}次構建</li>
+                <li>觸發原因：&nbsp;${CAUSE}</li>
+                <li>構建日志：&nbsp;<a href="${BUILD_URL}console">${BUILD_URL}console</a></li>
+                <li>構建&nbsp;&nbsp;Url&nbsp;：&nbsp;<a href="${BUILD_URL}">${BUILD_URL}</a></li>
+                <li>工作目錄&nbsp;：&nbsp;<a href="${PROJECT_URL}ws">${PROJECT_URL}ws</a></li>
+                <li>項目&nbsp;&nbsp;Url&nbsp;：&nbsp;<a href="${PROJECT_URL}">${PROJECT_URL}</a></li>
+            </ul>
+        </td>
+    </tr>
+    <tr>
+        <td><b><font color="#0B610B">Changes Since Last
+            Successful Build:</font></b>
+            <hr size="2" width="100%" align="center" /></td>
+    </tr>
+    <tr>
+        <td>
+            <ul>
+                <li>歷史變更記錄 : <a href="${PROJECT_URL}changes">${PROJECT_URL}changes</a></li>
+            </ul> ${CHANGES_SINCE_LAST_SUCCESS,reverse=true, format="Changes for Build #%n:<br />%c<br />",showPaths=true,changesFormat="<pre>[%a]<br />%m</pre>",pathFormat="&nbsp;&nbsp;&nbsp;&nbsp;%p"}
+        </td>
+    </tr>
+    <tr>
+        <td><b>Failed Test Results</b>
+            <hr size="2" width="100%" align="center" /></td>
+    </tr>
+    <tr>
+        <td><pre
+                style="font-size: 11pt; font-family: Tahoma, Arial, Helvetica, sans-serif">$FAILED_TESTS</pre>
+            <br /></td>
+    </tr>
+    <tr>
+        <td><b><font color="#0B610B">構建日志 (最後 100行):</font></b>
+            <hr size="2" width="100%" align="center" /></td>
+    </tr>
+    <tr>
+        <td><textarea cols="80" rows="30" readonly="readonly"
+                      style="font-family: Courier New">${BUILD_LOG, maxLines=100}</textarea>
+        </td>
+    </tr>
+</table>
+</body>
+</html>
+```
+4. 修改流水線腳本，可在專案配置中使用Pipeline Syntax 輔助；Declarative Directive Generator/Sample Directive：post: Post Stage or Build Conditions、Always run, regardless of build status；即可得到
+```groovy=
+post {
+  always {
+    // One or more steps need to be included within each condition's block.
+  }
+}
+```
+5. 一樣在Pipeline Syntax 中的Snippet Generator/Sample Step：emailext: Extended Email、To：收件者信箱、Subject：`構建通知：${PROJECT_NAME} - Build # ${BUILD_NUMBER} - ${BUILD_STATUS}!`、Body：`${FILE,path="email.html"}`；即可得到`emailext body: '${FILE,path="email.html"}', subject: '構建通知：${PROJECT_NAME} - Build # ${BUILD_NUMBER} - ${BUILD_STATUS}!', to: '收件者信箱'`
+6. 將以上兩步的結果加入到Jenkinsfile，內容在stages 之後並與之同級
+```groovy=
+pipeline {
+    agent any
+
+    stages {
+        stage('pull code') {
+            steps {
+                checkout scmGit(branches: [[name: '*/${branch}']], extensions: [], userRemoteConfigs: [[url: 'https://gitlab.com/chienkang1114/demo.git']])
+            }
+        }
+        stage('build project') {
+            steps {
+                sh 'mvn clean package'
+            }
+        }
+        stage('publish project') {
+            steps {
+                deploy adapters: [tomcat8(credentialsId: '88b48a98-4d97-4807-9e15-1ff9de4accc8', path: '', url: 'http://192.168.191.134:8080')], contextPath: null, war: 'target/*.war'
+            }
+        }
+    }
+    post {
+        always {
+            emailext body: '${FILE,path="email.html"}', subject: '構建通知：${PROJECT_NAME} - Build # ${BUILD_NUMBER} - ${BUILD_STATUS}!', to: 'chienkang1114@gmail.com'
+        }
+    }
+}
+```
+
+### 整合SonarQube
