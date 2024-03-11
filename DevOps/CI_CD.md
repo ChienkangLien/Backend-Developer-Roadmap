@@ -102,7 +102,7 @@ apt-get install -y maven
 1. Jenkins 需要依賴JDK：`sudo yum install java-1.8.0-openjdk-devel -y`；因為是使用docker 安裝Jenkins，所以也是在container 中做安裝(若容器自帶則免安裝)
 2. docker pull：`docker pull jenkins/jenkins`
 3. docker run：`docker run -d -p 8080:8080 -p 50000:50000 --name jenkins jenkins/jenkins`
-4. 訪問 http://192.168.191.132:8080/ 即可進一步安裝插件以及配置使用者資訊；這邊先安裝推薦插件以及跳過使用者配置(以admin 登入、默認密碼在容器中的`/var/jenkins_home/secrets/initialAdminPassword`)
+4. 訪問 http://192.168.191.132:8080/ 即可進一步安裝插件以及配置使用者資訊；這邊先安裝推薦插件以及跳過使用者配置(以admin 登入、默認密碼在容器中的`/var/jenkins_home/secrets/initialAdminPassword`)，這邊生成`edf5f58fdc0e47ac9b9f321a0b2248e6`
 
 ### 角色權限
 1. 安裝Role-based Authorization Strategy 並在Security/授權 選擇Role-Based Strategy 開啟功能。
@@ -362,3 +362,27 @@ pipeline {
 ```
 
 ### 整合SonarQube
+1. pull sonarqube image：`docker pull sonarqube:7.7-community`，7.9版之後不再支援使用MySQL 作為DB，所以如果是7.9以後的版本，只能結合Oracle / Microsoft SQL Server / PostgreSQL
+2. pull mysql image：`docker pull mysql:5.7.15`，搭配5.7版
+3. 啟動mysql 容器
+```shell=
+docker run -d \
+  --name mysql5.7.15 \
+  -p 3307:3306 \
+  -e TZ=Asia/Taipei \
+  -e MYSQL_ROOT_PASSWORD=123 \
+  -v /root/mysql5.7.15/data:/var/lib/mysql \
+  -v /root/mysql5.7.15/conf:/etc/mysql/conf.d \
+  -v /root/mysql5.7.15/init:/docker-entrypoint-initdb.d \
+  mysql:5.7.15
+```
+4. 連接mysql(192.168.191.132:3307) 並創建database sonar
+5. 啟動sonarqube 容器
+```shell=
+docker run -d -p 9000:9000 \
+	-e "SONARQUBE_JDBC_URL=jdbc:mysql://192.168.191.132:3307/sonar?useUnicode=true&characterEncoding=utf8&rewriteBatchedStatements=true&useConfigs=maxPerformance&useSSL=false" \
+	-e "SONARQUBE_JDBC_USERNAME=root" \
+	-e "SONARQUBE_JDBC_PASSWORD=123" \
+	--name sonarqube sonarqube:7.7-community
+```
+6. 訪問http://192.168.191.132:9000/ 並登入，默認帳密admin/admin，並生成token(提供給Jenkins連接)，這邊生成`4dccba4b51e9b7d076dd3e335b49a0baf4690ac7`
