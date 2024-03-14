@@ -1,11 +1,11 @@
-# CI/CD
+# Jenkins_Monolithic
 此練習VM 統一使用CentOS7
 
 | 名稱 | IP | 安裝軟體 |
 | -------- | -------- | -------- |
 | 程式託管  | Internet | Gitlab |
-| 持續集成  | 192.168.191.132 | Jenkins、JDK、Maven、Git、SonarQube |
-| 程式運行  | 192.168.191.134 | JDK、Tomcat |
+| 持續集成  | 192.168.191.132 | Jenkins、JDK17、Maven、Git、SonarQube |
+| 程式運行  | 192.168.191.134 | JDK17、Tomcat9 |
 
 ## GitLab
 在VM 啟用gitlab 耗時過久、改用線上gitlab；仍提供安裝方法
@@ -77,10 +77,24 @@ apt-get install -y maven
 
 ## Tomcat
 使用獨立Tomcat 運行
-1. 安裝JDK：`sudo yum install java-1.8.0-openjdk-devel -y`
-2. 把Tomcat 壓縮檔上傳到VM 中並解壓：`tar -xzf apache-tomcat-8.5.99.tar.gz`
+1. 安裝JDK
+```shell=
+cd /usr/lib/jvm
+wget https://download.oracle.com/java/17/latest/jdk-17_linux-x64_bin.tar.gz
+tar xf jdk-17_linux-x64_bin.tar.gz
+vi /etc/profile
+#最末添加以下內容
+export JAVA_HOME=/usr/lib/jvm/jdk-17.0.10
+export CLASSPATH=$JAVA_HOME/lib:$JRE_HOME/lib:$CLASSPATH
+export PATH=$JAVA_HOME/bin:$JRE_HOME/bin:$PATH
+#退出編輯後
+source /etc/profile
+#驗證
+java -version
+```
+2. 把Tomcat 壓縮檔上傳到VM 中並解壓：`tar -xzf apache-tomcat-9.0.86.tar.gz`
 3. 創建目錄：`mkdir -p /opt/tomcat`
-4. 移動檔案：`mv /root/apache-tomcat-8.5.99/* /opt/tomcat`
+4. 移動檔案：`mv /root/apache-tomcat-9.0.86/* /opt/tomcat`
 5. 新增用戶，為了讓Jenkins 所在的服務器使用；`vi /opt/tomcat/conf/tomcat-users.xml`
 ```xml=
 <tomcat-users>
@@ -99,7 +113,7 @@ apt-get install -y maven
 
 ## Jenkins
 ### 安裝
-1. Jenkins 需要依賴JDK：`sudo yum install java-1.8.0-openjdk-devel -y`；因為是使用docker 安裝Jenkins，所以也是在container 中做安裝(若容器自帶則免安裝)
+1. Jenkins 需要依賴JDK，因為是使用docker 安裝Jenkins，所以也是在container 中做安裝(若容器自帶則免安裝)
 2. docker pull：`docker pull jenkins/jenkins`
 3. docker run：`docker run -d -p 8080:8080 -p 50000:50000 --name jenkins jenkins/jenkins`
 4. 訪問 http://192.168.191.132:8080/ 即可進一步安裝插件以及配置使用者資訊；這邊先安裝推薦插件以及跳過使用者配置(以admin 登入、默認密碼在容器中的`/var/jenkins_home/secrets/initialAdminPassword`)，這邊生成`edf5f58fdc0e47ac9b9f321a0b2248e6`
@@ -122,7 +136,7 @@ apt-get install -y maven
 若是自建Gitlab 服務器，可改用公私鑰方式驗證
 
 ### 配置JDK 以及Maven
-Tools 中配置這兩項的安裝目錄；若是在Jenkins 容器中，可透過echo $JAVA_HOME 以及mvn --version 來查看
+Tools 中配置這兩項的安裝目錄；若是在Jenkins 容器中，可透過echo $JAVA_HOME 以及mvn -v 來查看
 
 接著在先前建立的FreeStyle 專案，即可在Configuration/Build Steps/執行 Shell 加入指令來做打包
 ```shell=
@@ -362,27 +376,115 @@ pipeline {
 ```
 
 ### 整合SonarQube
-1. pull sonarqube image：`docker pull sonarqube:7.7-community`，7.9版之後不再支援使用MySQL 作為DB，所以如果是7.9以後的版本，只能結合Oracle / Microsoft SQL Server / PostgreSQL
-2. pull mysql image：`docker pull mysql:5.7.15`，搭配5.7版
-3. 啟動mysql 容器
+(無法使用JDK8，SonarQube與Jenkins 無法整合，故選擇JDK17)
+1. pull sonarqube image：`docker pull sonarqube`，7.9以後的版本，只能結合Oracle / Microsoft SQL Server / PostgreSQL
+2. pull postgres image：`docker pull postgres`
+3. 啟動postgres 容器(默認帳號為postgres)
 ```shell=
-docker run -d \
-  --name mysql5.7.15 \
-  -p 3307:3306 \
-  -e TZ=Asia/Taipei \
-  -e MYSQL_ROOT_PASSWORD=123 \
-  -v /root/mysql5.7.15/data:/var/lib/mysql \
-  -v /root/mysql5.7.15/conf:/etc/mysql/conf.d \
-  -v /root/mysql5.7.15/init:/docker-entrypoint-initdb.d \
-  mysql:5.7.15
+docker run \
+    --name postgresql \
+    -e POSTGRES_PASSWORD=password \
+    -p 5432:5432 \
+    -v /root/postgres/data:/var/lib/postgresql/data \
+    -d postgres
 ```
-4. 連接mysql(192.168.191.132:3307) 並創建database sonar
-5. 啟動sonarqube 容器
+4. 連接postgres(192.168.191.132:5432) 並創建database sonar
+5. 啟動sonarqube 容器(默認連線URL 的schema 為public，若要更改可加上?currentSchema=my_schema)
 ```shell=
-docker run -d -p 9000:9000 \
-	-e "SONARQUBE_JDBC_URL=jdbc:mysql://192.168.191.132:3307/sonar?useUnicode=true&characterEncoding=utf8&rewriteBatchedStatements=true&useConfigs=maxPerformance&useSSL=false" \
-	-e "SONARQUBE_JDBC_USERNAME=root" \
-	-e "SONARQUBE_JDBC_PASSWORD=123" \
-	--name sonarqube sonarqube:7.7-community
+docker run -d --name sonarqube \
+    -p 9000:9000 --link postgresql:db \
+    -e SONAR_JDBC_URL=jdbc:postgresql://192.168.191.132:5432/sonar \
+    -e SONAR_JDBC_USERNAME=postgres \
+    -e SONAR_JDBC_PASSWORD=password \
+    -v sonarqube_data:/opt/sonarqube/data \
+    -v sonarqube_extensions:/opt/sonarqube/extensions \
+    -v sonarqube_logs:/opt/sonarqube/logs \
+    sonarqube
 ```
-6. 訪問http://192.168.191.132:9000/ 並登入，默認帳密admin/admin，並生成token(提供給Jenkins連接)，這邊生成`4dccba4b51e9b7d076dd3e335b49a0baf4690ac7`
+6. 訪問http://192.168.191.132:9000/ 並登入，默認帳密admin/admin，並生成token(提供給Jenkins連接)，這邊生成`sqa_f4c75f120fcf26a4189bcfeff98e07aebe93fa42` 並加入到Jenkins 的Credentials(Secret text)
+7. 在Jenkins 安裝SonarQube Scanner 插件並透過此插件在VM 中安裝SonarQube Scanner，Tools/SonarQube Scanner 安裝、name：自訂(這裡叫做sonarqube-scanner)、自動安裝、版本：最新
+8. 配置Sonar服務，System/SonarQube servers/Add SonarQube，name：自訂(這裡叫做sonarqube)、Server URL：http://192.168.191.132:9000/
+
+接著先說明非流水線專案如何套用，以先前創建的FreeStyle 專案為例
+1. Configuration/Build Steps/新增建置步驟/Execute SonarQube Scanner，JDK：jdk17、Analysis properties：輸入以下
+```shell=
+# must be unique in a given SonarQube instance
+sonar.projectKey=web_demo_freestyle
+# this is the name and version displayed in the SonarQube UI. Was mandatory prior to SonarQube 6.1.
+sonar.projectName=web_demo_freestyle
+sonar.projectVersion=1.0
+
+# Path is relative to the sonar-project.properties file. Replace "\" by "/" on Windows.
+# This property is optional if sonar.modules is set.
+sonar.sources=.
+sonar.exclusions=**/test/**,**/target/**
+sonar.java.binaries=target/classes
+
+sonar.java.source=17
+sonar.java.target=17
+
+# Encoding of the source code. Default is default system encoding
+sonar.sourceEncoding=UTF-8
+```
+
+接著說明流水線如何套用，以先前創建的Pipeline 專案為例
+1. 將以下內容push 到Git 專案中(sonar-project.properties)，
+```shell=
+# must be unique in a given SonarQube instance
+sonar.projectKey=web_demo_pipeline
+# this is the name and version displayed in the SonarQube UI. Was mandatory prior to SonarQube 6.1.
+sonar.projectName=web_demo_pipeline
+sonar.projectVersion=1.0
+
+# Path is relative to the sonar-project.properties file. Replace "\" by "/" on Windows.
+# This property is optional if sonar.modules is set.
+sonar.sources=src/main/java
+sonar.java.binaries=target/classes
+
+sonar.java.source=17
+sonar.java.target=17
+
+# Encoding of the source code. Default is default system encoding
+sonar.sourceEncoding=UTF-8
+```
+2. 修改Git 專案中的Jenkinsfile
+```groovy=
+pipeline {
+    agent any
+
+    stages {
+        stage('pull code') {
+            steps {
+                checkout scmGit(branches: [[name: '*/${branch}']], extensions: [], userRemoteConfigs: [[url: 'https://gitlab.com/chienkang1114/demo.git']])
+            }
+        }
+        stage('SonarQube checking') {
+			steps{
+				script {
+					// 引入sonarqubescanner工具
+					scannerHome = tool 'sonarqube-scanner'
+				}
+				//引入sonarqube的服務器
+				withSonarQubeEnv('sonarqube') {
+					sh "${scannerHome}/bin/sonar-scanner"
+				}
+			}
+		}
+        stage('build project') {
+            steps {
+                sh 'mvn clean package'
+            }
+        }
+        stage('publish project') {
+            steps {
+                deploy adapters: [tomcat8(credentialsId: '88b48a98-4d97-4807-9e15-1ff9de4accc8', path: '', url: 'http://192.168.191.134:8080')], contextPath: null, war: 'target/*.war'
+            }
+        }
+    }
+    post {
+        always {
+            emailext body: '${FILE,path="email.html"}', subject: '構建通知：${PROJECT_NAME} - Build # ${BUILD_NUMBER} - ${BUILD_STATUS}!', to: 'chienkang1114@gmail.com'
+        }
+    }
+}
+```
