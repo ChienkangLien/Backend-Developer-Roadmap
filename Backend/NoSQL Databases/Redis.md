@@ -147,9 +147,9 @@ Redis 的key 允許有多個單詞形成層級結構，多個單詞之間用':'�
 ### Hash
 也叫散列，其value 是一個無序字典，類似於Java 中的HashMap 結構。
 String 結構是將對象序列化為JSON 字符串後存儲，當需要修改對象某個字段時很不方便
-![image](https://hackmd.io/_uploads/HyQDdgXQA.png)
+![image](images/hash1.png)
 而Hash 結構可以將對象中的每個字段獨立存儲，可以針對單個字段做CRUD。
-![image](https://hackmd.io/_uploads/B11OOlX7C.png)
+![image](images/hash2.png)
 
 * HSET key field value：添加或者修改hash 類型key 的field 的值
 * HGET key field：獲取一個hash 類型key 的field 的值
@@ -178,7 +178,7 @@ String 結構是將對象序列化為JSON 字符串後存儲，當需要修改�
 * LSET key index value：通過索引設置列表元素的值
 * LREM key count value：移除列表元素
 
-![image](https://hackmd.io/_uploads/H1VVqlQ7A.png)
+![image](images/list.png)
 
 ### Set
 與Java 中的HashSet 類似，可以看做是一個value 為null 的HashMap。因為也是一個hash 表，因此具備與HashSet 類似的特征：無序、元素不可重復、查找快、支持交集和聯集和差集等功能。
@@ -195,7 +195,7 @@ String 結構是將對象序列化為JSON 字符串後存儲，當需要修改�
 * SDIFF key1 key2 ...：求key1 與key2 的差集(key1 中的，不存在key2 中)
 * SUNION key1 key2 ...：求key1 和key2 的聯集
 
-![image](https://hackmd.io/_uploads/BJiRsx7XR.png)
+![image](images/set.png)
 
 ### SortedSet(Zset)
 可排序的set 集合，與Java 中的TreeSet 有些類似，但底層數據結構卻差別很大。SortedSet 中的每一個元素都帶有一個score 屬性，可以基於score 屬性對元素排序，底層的實現是一個跳表（SkipList）加hash 表。具備特性：可排序、元素不重復、查詢速度快。
@@ -275,7 +275,7 @@ Redis 事務的主要作用就是串聯多個命令防止別的命令插隊。
 * 組隊階段：將所有命令加入命令隊列
 * 執行階段：依次執行隊列中的命令，期間不會被其他客戶端發送的請求命令插隊或打斷
 
-![image](https://hackmd.io/_uploads/Hkoh1aOm0.png)
+![image](images/tranx1.png)
 
 ```
 127.0.0.1:6379> multi
@@ -302,16 +302,16 @@ OK
 
 ### 錯誤處理
 組隊中某個命令出現了報告錯誤，執行時整個的所有隊列會都會被取消
-![image](https://hackmd.io/_uploads/B1tTyp_7R.png)
+![image](images/tranx2.png)
 如果執行階段某個命令出了錯誤，則只有報錯的命令不會被執行，其他的命令都會執行，不會回滾
-![image](https://hackmd.io/_uploads/ryBCyT_mC.png)
+![image](images/tranx3.png)
 
 ### 衝突處理
 悲觀鎖(Pessimistic Lock)：每次去拿數據的時候都認為別人會修改，所以每次在拿數據的時候都會上鎖，這樣別人想拿這個數據就會block 直到它拿到鎖。傳統的關係資料庫就用到了很多這種鎖機制，比如行鎖，表鎖等，讀鎖，寫鎖等，都是在做操作之前先上鎖。
-![image](https://hackmd.io/_uploads/ryNMzT_XA.png)
+![image](images/tranx4.png)
 
 樂觀鎖(Optimistic Lock)：每次去拿數據的時候都認為別人不會修改，所以不會上鎖，但是在更新的時候會判斷在此期間別人有沒有更新這個數據，可以使用版本號等機製。樂觀鎖適用於多讀的應用類型，這樣可以提高吞吐量。Redis 就是利用這種check-and-set 機制實現事務。
-![image](https://hackmd.io/_uploads/BkoBfpOX0.png)
+![image](images/tranx5.png)
 
 * WATCH key [key...]：在執行multi 之前，先執行watch key，可以監視一個(或多個)key，如果在事務執行之前這個(或這些)key 被其他命令所改動，那麽事務將被打斷
 * UNWATCH：取消WATCH 命令對key 的監視。如果在執 WATCH 命令之後，EXEC 命令或DISCARD 命令先被執行了的話，那麽就不需要再執行UNWATCH
@@ -508,3 +508,59 @@ key 對應的資料存在，但在Redis 中過期，此時若有大量的並發�
 2. 快取過期時間分散化：設定快取的過期時間為隨機值，避免大量快取同時過期
 3. 使用鎖或隊列（訊息中間件）： 用加鎖或隊列的方式來確保不會有大量的執行緒對資料庫一次性進行讀寫，不適用於高併發情況
 4. 設定過期標誌更新緩存：記錄緩存資料是否即將過期，如果即將過期會通知另外的執行緒做更新緩存
+
+## 分布式鎖
+常見的分布式鎖實作方式有以下幾種：
+* 基於資料庫的分布式鎖：使用資料庫的事務機制來實現，透過在資料庫插入一個唯一的記錄來實現鎖定，其他進程嘗試獲取鎖時會阻塞等待
+* 基於緩存的分布式鎖定：利用緩存服務器來實現鎖定，例如使用Redis 的SETNX 或RedLock 演算法來實現，其中RedLock 是一種多重鎖定方式，能夠在不同節點之間避免競爭條件
+* 基於ZooKeeper 的分布式鎖定：使用ZooKeeper 叢集節點來實現，ZooKeeper 提供了順序節點以及watch 機制來實現分布式鎖定的獲取和釋放
+
+Redis 能做到分布式鎖，主要也是基於單線程的特性。
+
+衍生問題，業務還沒執行完鎖就過期了怎麼辦？鎖刪除的時候報錯了怎麼辦？透過Redisson 解決(見代碼範例)
+### 過期時間
+每個鍵的過期時間是保存在一個獨立的過期字典（expiration dictionary）中的。這個字典與儲存實際鍵值對的資料字典（main dictionary）分開。過期字典的鍵與主字典的鍵相同，值是一個以 UNIX 時間戳記形式儲存的過期時間。
+
+在Redis 中我們可以透過四個不同的指令來給鍵設定過期時間
+1. EXPIRE key seconds：單位為秒
+2. PEXPIRE key milliseconds：單位為毫秒
+3. EXPIREAT key timestamp：指定為一個 UNIX 時間戳，單位為秒
+4. PEXPIREAT key milliseconds-timestamp：指定為一個 UNIX 時間戳，單位為毫秒
+
+檢查鍵是否過期
+1. 檢查給定鍵是否存在於過期時間，如果存在則取鍵的過期時間，如果當前UNIX 時間戳記大於鍵的過期時間，那麼鍵已經過期
+2. 使用`TTL`指令或`PTTL`指令，如果返回的值為負數，那麼該鍵已經過期
+
+當服務器運行在主從模式下時，從服務器的過期刪除動作由主服務器控制：
+1. 主服務器在刪除一個過期鍵後，會明確地向從服務器發送一個del 命令，告知從服務器刪除這個過期鍵
+2. 從服務器執行客戶端發送的讀取命令時，即使碰到過期鍵也不會將過期鍵刪除
+3. 從服務器只有在接到主服務器發來的del 指令後，才會刪除過期鍵
+
+#### RDB 對過期鍵的處理
+* 產生rdb 檔：產生時，程式會對鍵進行檢查，過期鍵不會放入rdb 檔
+* 載入rdb 檔：載入時，如果以主服務器模式運行，程式會對檔案中儲存的鍵進行檢查，過期鍵不會載入資料庫；如果以從服務器模式運行，無論鍵過期與否，都會載入資料庫中，過期鍵會透過與主伺服器同步而刪除。
+#### AOF 對過期鍵的處理
+* 當服務器以AOF 持久化模式運作時，如果鍵已經過期，但它還沒被刪除，那麼aof 檔案不會因為這個過期鍵而產生任何影響；當過期鍵被刪除後，程式會向aof 檔案追加一條del 指令來明確記錄該鍵已被刪除
+* aof 重寫過程中，程式會對資料庫中的鍵進行檢查，已過期的鍵不會被儲存到重寫的aof 檔案中
+
+### 刪除策略
+1. 惰性刪除：當客戶端嘗試存取一個鍵時，Redis 會檢查這個鍵是否已經過期。如果過期，會立即刪除這個鍵並傳回一個不存在的結果。這個策略的優點是簡單和高效，因為它只在必要時檢查鍵的過期時間；缺點是刪除前佔用的記憶體不會主動釋放
+2. 定時刪除：在設定鍵的過期時間的同時，建立一個定時器（timer），讓定時器在鍵的過期時間來臨時執行對鍵的刪除操作。可以確保過期鍵會被盡快刪除，但在過期鍵比較多的情況下，會佔用相當一部分CPU時間
+3. 定期刪除：Redis 會定期（預設每 100 毫秒）隨機檢查一部分設定了過期時間的鍵，並刪除那些已經過期的鍵。這種方式算是前兩者的一個折中方案，可以透過調整定時掃描的時間間隔和每次掃描的限定耗時，平衡效能及緩存資源。
+流程：
+    1. 遍歷所有的db
+    2. 從過期字典的key 的集合中隨機檢查20個key
+    3. 刪除檢查中發現的所有過期key
+    4. 如果檢查結果中25%以上的key 已過期，則繼續重複執行步驟2和步驟3，否則繼續遍歷下一個db
+    
+而Redis 中同時使用了惰性過期和定期過期兩種過期策略。
+
+#### 內存淘汰策略
+1. volatile-lru：使用最近最少使用（LRU Least Recently Used）演算法，從設定了過期時間的鍵中淘汰最近最少使用的鍵
+2. allkeys-lru：使用 LRU 演算法，從所有按鍵中淘汰最近最少使用的鍵，不論這些鍵是否設定了過期時間，通常使用該方式
+3. volatile-lfu：使用最近最少使用（LFU Least Frequently Used）演算法，從設定了過期時間的鍵中淘汰使用頻率最低的鍵
+4. allkeys-lfu：使用 LFU 演算法，從所有鍵中淘汰使用頻率最低的鍵，不論這些鍵是否設定了過期時間
+5. volatile-random：隨機淘汰設定了過期時間的鍵
+6. allkeys-random：隨機淘汰所有鍵，不論這些鍵是否設定了過期時間
+7. volatile-ttl：從設定了過期時間的按鍵中淘汰即將過期的鍵（剩餘生存時間最短的鍵）
+8. noeviction：不淘汰任何鍵。當記憶體不足以滿足寫入操作時，傳回錯誤；默認選項，一般不會選用
