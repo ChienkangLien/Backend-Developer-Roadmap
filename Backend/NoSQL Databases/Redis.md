@@ -460,36 +460,197 @@ save 60 10000  # 如果60秒（1分鐘）內有至少10000次寫操作
 * 性能開銷： fsync 操作會帶來一定的性能開銷，特別是在選擇 always 模式時
 
 ## 主從架構
+讀寫分離，性能可以大大提升；容災快速恢復。
 在此實作一主兩從：
+1. 創建/myredis 文件夾：`mkdir /myredis`
+2. 複製redis.conf 文件：`cp /usr/local/src/redis-6.2.14/redis.conf /myredis/`
+3. 方便起見將redis.conf 文件中的appendonly yes 改成no
+4. 建立三個配置文件
+```shell=
+cd /myredis/
+vi redis6379.conf
 
+#輸入以下
+include /myredis/redis.conf
+pidfile /var/run/redis_6379.pid
+port 6379
+dbfilename dump6379.rdb
+masterauth password
+#保存退出
 
-1. 從伺服器掛了：再重啟該從服務器，該從伺服器會變成獨立的主服務器。就會脫離了原有的主從架構。需要透過`slaveof <ip> <port>`命令其設定為從服務器，設定完成後即會從頭開始複製主服務器的資料。
-2. 主伺服器掛了：從服務器知道主服務器的狀態，但是從服務器不會自動上位，主服務器重新啟動之後還是主服務器。
+vi redis6380.conf
+
+#輸入以下
+include /myredis/redis.conf
+pidfile /var/run/redis_6380.pid
+port 6380
+dbfilename dump6380.rdb
+masterauth password
+#保存退出
+
+vi redis6381.conf
+
+#輸入以下
+include /myredis/redis.conf
+pidfile /var/run/redis_6381.pid
+port 6381
+dbfilename dump6381.rdb
+masterauth password
+#保存退出
+```
+5. 啟動服務器
+```shell=
+redis-server redis6379.conf
+redis-server redis6380.conf
+redis-server redis6381.conf
+ps -ef | grep redis  #會看到三個進程
+```
+6. 查看目前主從狀況，會發現三個port 連接進去都還是以master 身分運行
+```shell=
+redis-cli -p 6379 -a password
+
+127.0.0.1:6379> info replication
+```
+7. 配從庫、不配主庫
+```shell=
+127.0.0.1:6380> replicaof 127.0.0.1 6379
+127.0.0.1:6381> replicaof 127.0.0.1 6379
+127.0.0.1:6379> info replication
+#會發現主從配置成功，其他節點使用info replication也可見
+127.0.0.1:6379> set k1 v1
+OK
+127.0.0.1:6380> set k2 v2
+(error) READONLY You can't write against a read only replica.
+```
+slave 啟動成功連線到master 後會傳送一個sync 指令、master 接到指令會啟動後台的磁盤進程，收集所有的寫指令，並傳送整個資料檔（rdb檔）到slave 上，salve 拿到rdb 文件之後即完成同步
+
+* 從伺服器掛了：再重啟該從服務器，該從伺服器會變成獨立的主服務器。就會脫離了原有的主從架構。需要透過`replicaof <ip> <port>`命令其設定為從服務器，設定完成後即會從頭開始複製主服務器的資料
+* 主伺服器掛了：從服務器知道主服務器的狀態，但是從服務器不會自動上位，主服務器重新啟動之後還是主服務器
 
 ### 薪火相傳
-在一主多從的情況下，當從服務器太多情況下，一個主服務器管理不了那麼多從服務器，可以透過從服務器來管理從服務器
+在一主多從的情況下，當從服務器太多情況下，一個主服務器管理不了那麼多從服務器，可以透過從服務器來管理從服務器。風險是一旦某個從服務器掛了，那其底下的從服務器也沒法備份；而主服務器掛了，那從服務器也還是無法寫數據
+
+以先前的範例來說，執行`127.0.0.1:6381> replicaof 127.0.0.1 6380`，這樣就是6379(主) -> 6380(6379的從) -> 6381(6380的從)
 
 ### 反客為主
-當一個主服務器宕機後，後面的從服務器可以立刻升為主服務器，其他後面的從服務器不用做任何修改
+當一個主服務器宕機後，後面的從服務器可以升為主服務器，手動操作的話
+```shell=
+127.0.0.1:6380> replicaof 127.0.0.1 6379
+127.0.0.1:6381> replicaof 127.0.0.1 6379
 
-## 哨兵模式
-為了解決主從架構中，主服務宕機之後，其餘從伺服器不能主動晉升為主伺服器的問題，接著說明哨兵模式。該模式監聽主服務器，在宕機之後自動從各個從服務器中選出一個作為新的主服務器。哨兵可以設定一個，也可以設定多個，一般而言會設定大於1個的奇數個哨兵，以防止哨兵自身宕機的情況發生。
+127.0.0.1:6379> shutdown
 
-挑選出新的主服務器後sentinel 向原主服務器的從服務器發送slaveof 指令，當下線的服務重新上線時，sentinel 會向其發送slaveof 指令，讓其成為新主的從服務器。
+127.0.0.1:6380> replicaof no one
+127.0.0.1:6381> replicaof 127.0.0.1 6380
+```
 
-### 選舉條件
+### 哨兵模式
+為了解決主從架構中，主服務宕機之後，其餘從伺服器不能主動晉升為主伺服器的問題。該模式監聽主服務器，在宕機之後自動從各個從服務器中選出一個作為新的主服務器。哨兵可以設定一個，也可以設定多個，一般而言會設定大於1個的奇數個哨兵，以防止哨兵自身宕機的情況發生。
+
+挑選出新的主服務器後sentinel 向原主服務器的從服務器發送replicaof 指令，當下線的服務重新上線時，sentinel 會向其發送replicaof 指令，讓其成為新主的從服務器。
+
+1. 新建sentinel.conf 文件：`vi sentinel.conf`
+2. 輸入內容：mymaster 為監控物件其的伺服器名稱，1 為至少有多少個哨兵同意遷移的數量
+```
+sentinel monitor mymaster 192.168.191.138 6379 1
+sentinel auth-pass mymaster password
+```
+3. 啟動哨兵：`redis-sentinel sentinel.conf`
+4. 關閉6379，隨即哨兵會選出新的master
+
+#### 選舉條件
 1. 選擇優先順序靠前的：優先權在`redis.conf`中配置，預設`replica-priority 100`，值越小優先權越高
-2. 選擇偏移量最大的：偏移量是指獲得原主機資料最全的
-3. 選擇runid 最小的：每個Redis 實例啟動後都會隨機產生一個40位元的runid
+2. 若replica-priority 相同，選擇偏移量最大的：偏移量是指獲得原主機資料最全的
+3. 若偏移量相同，選擇runid 最小的：每個Redis 實例啟動後都會隨機產生一個40位元的runid
 
 ## 集群
 Redis 集群是去中心化的，意思是沒有中心服務器，每個寫入操作都可以自由的落到任意的主機上，此過程不需要代理服務器就能實現；缺點是不支援多鍵操作。
-在此實作三個主節點和三個從節點(至少也是要這個數量)：
+在此實作三個主節點和三個從節點(最少也是需要六個Redis 實例)：
+1. 創建/myredis/cluster：目錄 `mkdir /myredis/cluster`
+2. 複製redis.conf 文件：`cp /usr/local/src/redis-6.2.14/redis.conf /myredis/cluster`
+3. 方便起見將redis.conf 文件中的appendonly yes 改成no
+4. 建立配置文件
+```shell=
+cd /myredis/cluster
+vi redis6379.conf
+
+#輸入以下
+include /myredis/cluster/redis.conf
+pidfile /var/run/redis_6379.pid
+port 6379
+dbfilename dump6379.rdb
+masterauth password
+cluster-enabled yes
+cluster-config-file nodes-6379.conf
+cluster-node-timeout 15000
+#保存退出
+
+cp redis6379.conf redis6380.conf
+cp redis6379.conf redis6381.conf
+cp redis6379.conf redis6389.conf
+cp redis6379.conf redis6390.conf
+cp redis6379.conf redis6391.conf
+
+##重複執行(6380~6391)
+vi redis6380.conf
+
+#輸入以下
+:%s/6379/6380
+#保存退出
+##重複執行(6380~6391)
+```
+5. 啟動服器
+```shell=
+redis-server redis6379.conf
+redis-server redis6380.conf
+redis-server redis6381.conf
+redis-server redis6389.conf
+redis-server redis6390.conf
+redis-server redis6391.conf
+ps -ef | grep redis  #會看到三個進程
+```
+6. nodes-XXXX.conf 文件會自動生成
+7. `redis-cli --cluster create --cluster-replicas 1  192.168.191.139:6379 192.168.191.139:6380 192.168.191.139:6381 192.168.191.139:6389 192.168.191.139:6390 192.168.191.139:6391 -a password
+`：--cluster-replicas 1 表示以最簡單的方式自動配置集群，一主一從正好三組
+8. 確認集群狀態：`redis-cli -c -p 6379 -a password` 連接後執行`cluster nodes`
 
 ### slot
 管理和分配資料的一種機制。Redis 集群將資料分片，以便在多個節點之間分佈和儲存資料。Redis 集群將整個鍵空間分為16384個插槽（slots）。每個鍵根據其哈希值映射到一個插槽上，然後由特定的節點來管理和儲存這個插槽內的資料。
 
-如果所有某一段插槽的主從節點都宕掉了，Redis 服務是否還能繼續：`redis.conf`中的參數`cluster-require-full-coverage`為yes(默認)、那麼整個叢集都掛掉；為no、那麼該插槽的資料全部不能使用，也無法儲存
+不在一個slot 下的鍵值對，是不能使用mget、mset 等多鍵操作。可以透過`{}`來定義群組的概念，從而使key 中`{}`內相同內容的鍵值對放在一個slot 中。
+```
+192.168.191.138:6381> mset name jack age 30
+(error) CROSSSLOT Keys in request don't hash to the same slot
+192.168.191.138:6381> mset name{user} jack age{user} 30
+-> Redirected to slot [5474] located at 192.168.191.138:6380
+OK
+```
+其他常用指令
+```
+#查詢某個鍵所在的插槽值
+192.168.191.138:6380> cluster keyslot name{user}
+(integer) 5798
+
+#統計某個插槽上的鍵值數量，需要在插槽所在的節點上才會有值
+192.168.191.138:6380> set k2 v2
+-> Redirected to slot [449] located at 192.168.191.138:6379
+OK
+192.168.191.138:6379> cluster keyslot k2
+(integer) 449
+192.168.191.138:6379> cluster countkeysinslot 449
+(integer) 1
+
+#取得count個slot插槽上的鍵
+127.0.0.1:6380> cluster getkeysinslot 5474 1
+1) "age{user}"
+127.0.0.1:6380> cluster getkeysinslot 5474 2
+1) "age{user}"
+2) "name{user}"
+```
+
+如果主節點下線，從節點會自動升為主節點，超時的時間是15秒。原來的主節點恢復後，原主節點會變成從節點。
+
+如果所有某一段插槽的主從節點都宕掉了，Redis 服務是否還能繼續：`redis.conf`中的參數`cluster-require-full-coverage`為yes(默認)、那麼整個叢集都掛掉；為no、那麼該插槽的資料全部不能使用，而其他組主從節點維持運作
 
 ## 應用問題
 ### 緩存穿透
