@@ -140,7 +140,7 @@ PUT /tutorial //索引庫名稱
             },
             "name":{ //字段名3
                 "preoperties":{
-                    "furstName":{ //子字段
+                    "firstName":{ //子字段
                         "type":"text"
                     }
                 }
